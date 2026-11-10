@@ -15,13 +15,15 @@
         <nav class="top-nav" aria-label="Ana menü">
           <button class="nav active" data-page="overview"><span>◫</span><b data-i18n="overview">Genel bakış</b></button>
           <button class="nav" data-page="apps"><span>▦</span><b data-i18n="apps">Uygulamalar</b></button>
+          <button class="nav" data-page="connections"><span>⇄</span><b data-i18n="live">Bağlantılar</b></button>
+          <button class="nav" data-page="usage"><span>▤</span><b data-i18n="usage">Kullanım</b></button>
           <button class="nav" data-page="dns"><span>◎</span><b>DNS</b></button>
           <button class="nav" data-page="firewall"><span>◈</span><b data-i18n="protect">Koruma</b></button>
           <button class="nav" data-page="network"><span>⬡</span><b data-i18n="network">Ağ</b></button>
           <button class="nav" data-page="dpi"><span>↗</span><b>DPI</b></button>
           <button class="nav" data-page="history"><span>◷</span><b data-i18n="history">Geçmiş</b></button>
         </nav>
-        <div class="top-actions"><button id="language" title="Language">TR</button><button id="theme" title="Theme">☾</button></div>
+        <div class="top-actions"><button id="language" title="Language">TR</button><button id="theme" title="Theme">☾</button><button id="settings" title="Ayarlar">⚙</button></div>
       </div>
     </header>
     <div class="shell">
@@ -73,6 +75,29 @@
             <div id="apps-rows" class="apps-rows"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div>
           </div>
         </section>
+        <section id="connections-page" class="conn-page hidden">
+          <div class="apps-toolbar"><input id="conn-search" type="search" autocomplete="off" placeholder="Uygulama, adres veya ülke ara" aria-label="Bağlantı ara"><div class="apps-toolbar-right"><div class="view-tabs"><button class="selected" data-connview="all" data-i18n="all">Tümü</button><button data-connview="wan" data-i18n="internet">İnternet</button><button data-connview="lan" data-i18n="localNetwork">Yerel ağ</button></div><span id="conn-count">0</span></div></div>
+          <div class="table-card conn-table">
+            <div class="table-head conn-head"><span data-i18n="application">Uygulama</span><span data-i18n="target">Hedef</span><span data-i18n="trafficType">Trafik türü</span><span data-i18n="country">Ülke</span><span data-i18n="download">Alınan</span><span data-i18n="upload">Gönderilen</span></div>
+            <div id="conn-rows" class="conn-rows"></div>
+          </div>
+        </section>
+        <section id="usage-page" class="usage-page hidden">
+          <section class="stats usage-stats">
+            <div class="stat"><div class="stat-top"><span data-i18n="today">Bugün</span><span class="stat-icon">◷</span></div><div class="stat-value" id="usage-today">—</div></div>
+            <div class="stat"><div class="stat-top"><span data-i18n="thisMonth">Bu ay</span><span class="stat-icon">▤</span></div><div class="stat-value" id="usage-month">—</div></div>
+            <div class="stat"><div class="stat-top"><span data-i18n="recorded">Kayıtlı toplam</span><span class="stat-icon">Σ</span></div><div class="stat-value" id="usage-all">—</div></div>
+          </section>
+          <section class="chart-card">
+            <div class="card-heading"><h2 data-i18n="daily">Günlük kullanım</h2><span id="usage-note" class="dns-meta"></span></div>
+            <div id="usage-days" class="usage-days"></div>
+          </section>
+          <div class="table-card">
+            <div class="card-heading"><h2 data-i18n="perApp">Uygulama başına</h2><span id="usage-count">0</span></div>
+            <div class="table-head usage-head"><span data-i18n="application">Uygulama</span><span data-i18n="signature">İmza</span><span data-i18n="today">Bugün</span><span data-i18n="thisMonth">Bu ay</span><span data-i18n="recorded">Kayıtlı toplam</span></div>
+            <div id="usage-rows" class="usage-rows"></div>
+          </div>
+        </section>
         <section id="dns-page" class="dns-page hidden">
           <div class="dns-grid">
             <section class="dns-card"><h2 data-i18n="dnsServers">Etkin DNS sunucuları</h2><div id="dns-servers" class="dns-servers"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div></section>
@@ -86,6 +111,11 @@
           <div class="table-card history-table"><div class="history-head"><span data-i18n="application">Uygulama</span><span data-i18n="target">Hedef</span><span data-i18n="protocol">Protokol</span><span data-i18n="state">Durum</span><span data-i18n="lastSeen">Son görülen</span></div><div id="history-rows"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div></div>
         </section>
         <section id="firewall-page" class="firewall-page hidden">
+          <section class="alerts-card">
+            <div class="card-heading"><h2 data-i18n="alerts">Uyarılar</h2><button id="alerts-clear" class="text-button" data-i18n="clearAlerts">Listeyi temizle</button></div>
+            <p id="alerts-note" class="alerts-note" data-i18n="alertsNote">Bir uygulama ilk kez dışarı bağlandığında veya çalıştığı dosya değiştiğinde burada yazar. Bağlantı engellenmez, olduktan sonra bildirilir.</p>
+            <div id="alerts-list" class="alerts-list"></div>
+          </section>
           <div class="fw-strip"><div id="fw-profiles" class="fw-profiles"></div><span id="fw-note" class="fw-note"></span></div>
           <div class="apps-toolbar"><input id="fw-search" type="search" autocomplete="off" placeholder="Uygulama ara" aria-label="Uygulama ara"><div class="apps-toolbar-right"><div class="view-tabs"><button class="selected" data-fwview="active" data-i18n="runningApps">Çalışanlar</button><button data-fwview="blocked" data-i18n="blocked">Engellenen</button></div><span id="fw-count">0</span></div></div>
           <div class="table-card fw-table">
@@ -120,6 +150,10 @@
     </main>
     </div>
   </div>
+  <div id="settings-panel" class="detail-backdrop hidden"><section class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div class="detail-head"><h2 id="settings-title" data-i18n="settings">Ayarlar</h2><button id="settings-close" aria-label="Kapat">×</button></div><div class="settings-body">
+    <div class="setting-row"><div><b data-i18n="autostart">Windows ile başlat</b><small data-i18n="autostartNote">Oturum açıldığında Wirecove penceresiz başlar ve simge durumunda ölçmeye devam eder.</small></div><button id="autostart-toggle" class="switch" role="switch" aria-checked="false"><i></i></button></div>
+    <div class="setting-row"><div><b data-i18n="recordKept">Tutulan kayıt</b><small id="settings-record"></small></div></div>
+  </div></section></div>
   <div id="app-detail" class="detail-backdrop hidden"><section class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div class="detail-head"><h2 id="detail-title">Uygulama</h2><button id="detail-close" aria-label="Kapat">×</button></div><div id="detail-body"></div></section></div>
   <script src="renderer.js"></script>
 </body>

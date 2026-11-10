@@ -11,6 +11,8 @@ const dpi = require('./dpi/control');
 const traffic = require('./traffic');
 const firewall = require('./firewall');
 const netscan = require('./netscan');
+const signature = require('./signature');
+const ledger = require('./ledger');
 
 let installedCache = null;
 let trafficCache = null;
@@ -72,7 +74,24 @@ function capabilities() {
     // Blocking writes an ordinary Windows Firewall rule, which needs
     // administrator rights. Reading the rules does not.
     firewall: Object.assign(firewall.available(elevated), { readable: true }),
-    scanner: { supported: true, reason: null, note: 'arp-and-echo' }
+    scanner: { supported: true, reason: null, note: 'arp-and-echo' },
+    // Daily and monthly figures are the same per-process measurement, banked
+    // to a file as it is taken. Without the byte counters there is nothing to
+    // bank, so this cannot outlive that limitation.
+    usage: {
+      supported: rates.supported, reasonKey: rates.reasonKey, reason: rates.reason,
+      retentionDays: ledger.USAGE_DAYS, note: 'daily-ledger'
+    },
+    // Alerts are after the fact: a program is reported once it has already
+    // connected, because nothing here holds a packet back to ask first.
+    alerts: {
+      supported: rates.supported, reasonKey: rates.reasonKey, reason: rates.reason,
+      note: 'after-the-fact'
+    },
+    // Who signed a program, checked against this machine's own certificate
+    // stores. No hash leaves the machine, and no reputation service is asked.
+    signatures: { supported: true, reason: null, note: 'authenticode-local' },
+    autostart: { supported: true, reason: null, note: 'login-item' }
   };
 }
 
@@ -146,5 +165,7 @@ module.exports = {
   dpi,
   traffic,
   firewall,
-  netscan
+  netscan,
+  signature,
+  Ledger: ledger.Ledger
 };

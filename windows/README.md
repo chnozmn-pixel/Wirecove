@@ -33,6 +33,12 @@ service and nothing leaves the computer.
 | Which country | the regional registries' delegation records, compiled at packaging time | **administrator** |
 | Devices on the local network | the Windows neighbour table, and ICMP echo when the scan button is pressed | none |
 | Per-application blocking | Windows Firewall rules in the `Wirecove` group | **administrator** |
+| Rates while the window is closed | the collector keeps running behind a tray icon | as above |
+| Every open connection, one row each | the same per-connection counters, joined to the owning process | **administrator** |
+| Daily and monthly usage per application | the same counters, banked to a JSON file once a minute | **administrator** |
+| First connection, and a changed program file | this machine's own record of what it has already seen | **administrator** |
+| Who signed a program | `Get-AuthenticodeSignature`, against this machine's certificate stores | none |
+| Start with Windows | the standard per-user startup entry | none |
 | Target test (DNS, TCP, TLS) | Python standard library, with Windows building the certificate chain | none |
 | DPI | GoodbyeDPI with the WinDivert driver | **administrator** |
 
@@ -78,7 +84,11 @@ so rather than presenting them as equally solid:
   the table is missing instead of leaving the panel blank.
 - **Host names** are reverse DNS, looked up on background threads. A name that
   has not come back yet simply is not shown; the address is never dressed up as
-  a name.
+  a name. Where a name did come back, the address it resolved from is shown
+  under it, because reverse DNS is whatever the holder of that address chose to
+  publish and is worth being able to check. The same applies in the
+  per-application panel and the history list, where the address is the primary
+  text and the service, country and name sit beneath it.
 
 **Blocking is a Windows Firewall rule, not a filter of our own.** Wirecove
 installs no network driver to block with. The switch on the Protect page writes
@@ -89,6 +99,53 @@ never opened again, and nothing outside that group is ever touched, so a rule
 the user or their workplace put there is safe. Writing a rule needs
 administrator rights; reading them does not, so the page shows the real state
 either way and the switches are simply not usable without them.
+
+**Closing the window does not stop the measurement.** A traffic monitor that
+only measures while someone is looking at it has a hole in its record exactly
+where the interesting traffic is. Closing the window hides it to the
+notification area and the collector keeps running; the tray icon's tooltip
+carries the current rates, its menu reopens the window, and its Quit is the way
+to actually stop. The first time the window is closed the application says what
+it just did rather than appearing to have quit. Only one Wirecove runs at a
+time: launching again raises the window that is already there, because two
+would each switch collection on and report two different totals for the same
+machine.
+
+**The daily figures are the live measurement, written down.** Nothing new is
+counted for the Usage page. Each second the collector reports how many bytes
+every process has moved since it started; the difference between two reports
+is what moved in between, and once a minute that difference is added to
+today's row under the file the process runs from. So a figure outlives the
+process that earned it: close the program, and what it used is still on
+today's row. It is also why the Usage page has the same blind spots as the
+live one - no administrator rights, no counters, no daily figures, and the
+page says so instead of showing zeros. The record is ninety days of
+`ledger.json` in Wirecove's own data folder: a plain file, so its owner can
+open it and read exactly what was kept about them. Nothing is sent anywhere,
+and a process whose executable cannot be read is banked under its name rather
+than dropped, so a day's total stays true even where the file behind it is
+unknown.
+
+**Alerts are after the fact, and say so.** An application appears in the list
+the first time it is seen connecting out, or when the file it runs from stops
+being the file that was seen before - a different size, a different write
+time, or a different signer. That is a fact about the file, not a judgement
+about it. On a fresh install the first pass only writes the baseline: fifty
+alerts at once would be noise, not information. Nothing is held back while you
+decide, because nothing here can hold a packet.
+
+**A signature says who vouches for a file, and nothing more.** It is read by
+Windows from the certificate stores already on this machine, so no hash and no
+program name leaves the computer. The status is shown in Windows' own words -
+`Valid`, `NotSigned`, `HashMismatch` - and a signer's name is shown next to
+it, never instead of it. A valid signature does not mean a program is safe and
+is not presented as if it did.
+
+**Starting with Windows starts without a window.** The switch writes the
+ordinary per-user startup entry and is read back from the machine every time
+the panel opens, so it cannot disagree with what Windows will actually do. An
+autostarted Wirecove goes straight to the notification area and measures from
+there.
 
 **The device list is the neighbour table until you ask for more.** Opening the
 Network page sends nothing: it reads the ARP and neighbour discovery entries
@@ -303,7 +360,17 @@ separate test.
 
 - Rates without administrator rights. There is no counter for it: it would mean
   an elevated helper service that the unprivileged window talks to.
-- UDP volume, which needs a packet-level source rather than a connection table.
+- UDP volume, and therefore QUIC - a large share of what a browser, a video
+  call or a game actually moves. This is the biggest gap in the figures: the
+  totals are systematically low and will not match a router's. There are two
+  ways in, both needing administrator rights, which the counters already do:
+  the kernel's own network events (ETW `Microsoft-Windows-Kernel-Network`
+  carries UDP bytes with the owning process, which is exactly the shape needed
+  but awkward to consume), or sniffing with WinDivert, which this build already
+  carries, and joining each datagram's local port to `GetExtendedUdpTable`.
+  WinDivert is the shorter path because the driver is already here and already
+  proven; the risk is cost per packet, so it would have to be filtered to UDP
+  and read in batches.
 - Store (MSIX/UWP) applications in the inventory; they have no plain `.exe`
   path and need a package-family lookup.
 - A live test of the DPI engine under administrator rights on a line that is
@@ -312,12 +379,23 @@ separate test.
 - Asking before a connection rather than blocking after it. GlassWire's "ask to
   connect" holds the first packet of a new connection until the person answers.
   Windows Firewall cannot do that for an application it is not already
-  blocking, so it would need a filtering driver of our own. Blocking here is
-  therefore a decision made in advance, and the page does not pretend otherwise.
+  blocking. It is not out of reach - WinDivert, which this build already ships
+  for the DPI engine, can hold and release packets - but it is the one feature
+  here that can take the whole machine's traffic down if it is got wrong, and
+  attributing a packet to a process at the moment it leaves is a race that has
+  to be won every time. Blocking is therefore a decision made in advance, and
+  the page does not pretend otherwise.
 - A reputation or malware verdict per application. Scoring and VirusTotal
   lookups mean sending a hash of the user's programs to someone else's service,
   on someone else's account. That is a different product decision, not a
   missing function, so there is no empty column waiting for it.
+- Per-hour detail, and usage history for hosts and countries rather than only
+  for applications. The daily rows are the measurement already being taken;
+  these are the same measurement banked more finely, and the file would grow
+  accordingly.
+- Alerting on anything beyond a first connection and a changed file - a new
+  listening port, say, or a program connecting somewhere it never has before.
+  Both are reachable from what is already measured.
 - MAC vendor names on the Network page, which need an OUI table of their own.
 - Country for the machine rather than the registration. The registries say who
   a block was delegated to; where it is announced is a different question and a

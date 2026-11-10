@@ -44,6 +44,38 @@ Object.assign(labels.en, {
   'reason.unwritten':'Not written yet.',
   'reason.missing.countries':'This build carries no country table.'
 });
+Object.assign(labels.tr, {
+  live:'Bağlantılar', usage:'Kullanım', internet:'İnternet', localNetwork:'Yerel ağ',
+  country:'Ülke', thisMachine:'Bu makine',
+  today:'Bugün', thisMonth:'Bu ay', recorded:'Kayıtlı toplam', daily:'Günlük kullanım',
+  perApp:'Uygulama başına', signature:'İmza', alerts:'Uyarılar',
+  clearAlerts:'Listeyi temizle', settings:'Ayarlar', autostart:'Windows ile başlat',
+  recordKept:'Tutulan kayıt', connSearch:'Uygulama, adres veya ülke ara',
+  noConnections:'Açık ölçülmüş bağlantı yok', noUsageYet:'Henüz kayıt yok',
+  unknownApp:'Bilinmiyor', unsigned:'İmzasız', signatureUnknown:'Okunamadı',
+  firstConnection:'İlk kez bağlandı', binaryChanged:'Dosyası değişti',
+  noAlerts:'Uyarı yok', changedSize:'boyut', changedModified:'tarih',
+  changedSigner:'imza sahibi',
+  alertsNote:'Bir uygulama ilk kez dışarı bağlandığında veya çalıştığı dosya değiştiğinde burada yazar. Bağlantı engellenmez, olduktan sonra bildirilir.',
+  autostartNote:'Oturum açıldığında Wirecove penceresiz başlar ve simge durumunda ölçmeye devam eder.',
+  recordNote:'Günlük kullanım en fazla {days} gün, kendi veri klasöründeki ledger.json dosyasında tutulur. Hiçbir şey dışarı gönderilmez.'
+});
+Object.assign(labels.en, {
+  live:'Connections', usage:'Usage', internet:'Internet', localNetwork:'Local network',
+  country:'Country', thisMachine:'This machine',
+  today:'Today', thisMonth:'This month', recorded:'Recorded total', daily:'Daily usage',
+  perApp:'Per application', signature:'Signature', alerts:'Alerts',
+  clearAlerts:'Clear list', settings:'Settings', autostart:'Start with Windows',
+  recordKept:'What is kept', connSearch:'Search app, address or country',
+  noConnections:'No measured connection open', noUsageYet:'Nothing recorded yet',
+  unknownApp:'Unknown', unsigned:'Unsigned', signatureUnknown:'Unreadable',
+  firstConnection:'Connected for the first time', binaryChanged:'Its file changed',
+  noAlerts:'No alerts', changedSize:'size', changedModified:'write time',
+  changedSigner:'signer',
+  alertsNote:'An application appears here the first time it connects out, or when the file it runs from changes. Nothing is held back; it is reported after the fact.',
+  autostartNote:'Wirecove starts with no window at sign-in and keeps measuring from the notification area.',
+  recordNote:'Daily usage is kept for at most {days} days in ledger.json inside Wirecove’s own data folder. Nothing is sent anywhere.'
+});
 
 const $ = id => document.getElementById(id);
 const features = window.wirecove.capabilities.features;
@@ -91,6 +123,12 @@ let netState = null;
 let netError = null;
 let netBusy = false;
 const regionCache = new Map();
+
+let connView = 'all';
+let usageReport = null;
+let usageError = null;
+let alerts = [];
+let settings = null;
 
 // Country names come from the runtime's own locale data rather than a table
 // shipped here, so they are already written the way the rest of the system
@@ -306,6 +344,15 @@ function detailMetric(label, value) {
   item.append(name, number); return item;
 }
 
+// A history row names its peer as text; the measurement knows that peer by
+// address and port. This is the join, and it answers nothing when the two do
+// not match rather than guessing at a near miss.
+function peerFor(remote) {
+  const match = /^(?:\[(.+)\]|([^:]+)):(\d+)$/.exec(remote || '');
+  if (!match) return null;
+  return peers.get(`${match[1] || match[2]}:${Number(match[3])}`) || null;
+}
+
 function renderDetail(apps=aggregateApps()) {
   const item = apps.get(selectedApp);
   if (!item) return closeDetail();
@@ -329,14 +376,29 @@ function renderDetail(apps=aggregateApps()) {
     detailMetric(labels[language].connections, String(item.open)));
   body.append(session);
   const targets = historyRows.filter(row => row.pid===item.pid &&
-    OPEN_STATES.has(row.state) && row.last_seen >= historyObservedAt/1000 - 4).slice(0,8);
+    OPEN_STATES.has(row.state) && row.last_seen >= historyObservedAt/1000 - 4).slice(0,14);
   if (targets.length) {
     const section = document.createElement('div'); section.className='detail-section';
     const heading = document.createElement('h3'); heading.textContent=labels[language].target;
     section.append(heading);
     for (const row of targets) {
       const line = document.createElement('div'); line.className='detail-connection';
-      line.textContent = row.remote; line.title = `${row.local} → ${row.remote}`;
+      const address = document.createElement('b');
+      address.textContent = row.remote;
+      line.append(address);
+      const known = peerFor(row.remote);
+      // Everything after the address is a reading of it, so it is shown as a
+      // second, quieter line rather than mixed into the address itself.
+      const parts = [];
+      if (known?.service) parts.push(known.service);
+      if (known?.country) parts.push(countryName(known.country));
+      if (known?.host) parts.push(known.host);
+      if (parts.length) {
+        const note = document.createElement('small');
+        note.textContent = parts.join('  ·  ');
+        line.append(note);
+      }
+      line.title = `${row.local} → ${row.remote}`;
       section.append(line);
     }
     body.append(section);
@@ -399,6 +461,12 @@ function renderHistory() {
     element.append(appCell({key:row.identity, name:row.process}));
     const target = document.createElement('button'); target.className='history-target';
     target.textContent = row.remote; target.title = `${row.local} → ${row.remote}`;
+    const known = peerFor(row.remote);
+    if (known) {
+      const parts = [known.host, known.service, known.country && countryName(known.country)]
+        .filter(Boolean);
+      if (parts.length) target.title = parts.join('  ·  ');
+    }
     target.addEventListener('click', () => {
       const host = row.remote.replace(/^\[(.+)\]:\d+$/, '$1').replace(/:\d+$/, '');
       $('diagnose-target').value = host; runDiagnostic(host);
@@ -490,13 +558,14 @@ function livePeers() {
   return [...peers.values()];
 }
 
-function groupPeers(rows, keyOf, labelOf) {
+function groupPeers(rows, keyOf, labelOf, subOf) {
   const groups = new Map();
   for (const row of rows) {
     const key = keyOf(row);
     if (key == null) continue;
     const entry = groups.get(key)
-      || {key, label: labelOf(row), total: 0, rate: 0, sockets: 0, code: null};
+      || {key, label: labelOf(row), sub: subOf ? subOf(row) : null,
+          total: 0, rate: 0, sockets: 0, code: null};
     entry.total += row.bytes_in + row.bytes_out;
     entry.rate += (row.bytes_in_per_second || 0) + (row.bytes_out_per_second || 0);
     entry.sockets += row.sockets || 0;
@@ -516,10 +585,21 @@ function renderBreakdownList(container, items, feature) {
     element.className = 'breakdown-row';
     const name = document.createElement('span');
     name.className = 'breakdown-name';
+    // The label and the address it resolved from are two lines, each clipped
+    // on its own. Left as bare text they run together and read as one word.
+    const label = document.createElement('span');
+    label.className = 'breakdown-label';
     const chip = item.code ? codeChip(item.code) : null;
-    if (chip) name.append(chip);
-    name.append(document.createTextNode(item.label));
-    name.title = item.label;
+    if (chip) label.append(chip);
+    label.append(document.createTextNode(item.label));
+    name.append(label);
+    name.title = item.sub ? `${item.label} (${item.sub})` : item.label;
+    if (item.sub) {
+      const sub = document.createElement('small');
+      sub.className = 'breakdown-sub';
+      sub.textContent = item.sub;
+      name.append(sub);
+    }
     const bar = document.createElement('div');
     bar.className = 'breakdown-bar';
     const fill = document.createElement('i');
@@ -536,7 +616,10 @@ function renderBreakdownList(container, items, feature) {
 function renderBreakdown() {
   const rows = livePeers();
   renderBreakdownList($('hosts-list'),
-    groupPeers(rows, row => row.address, row => row.host || row.address),
+    groupPeers(rows, row => row.address, row => row.host || row.address,
+      // The address is shown even when a name came back: the name is reverse
+      // DNS, which is whatever the address holder chose to publish.
+      row => (row.host ? row.address : null)),
     features.hosts);
   renderBreakdownList($('services-list'),
     groupPeers(rows, row => row.service || `:${row.port}`,
@@ -630,7 +713,7 @@ function firewallRow(item, blocked) {
   } else {
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.className = `fw-toggle${blocked ? ' on' : ''}`;
+    toggle.className = `switch fw-toggle${blocked ? ' on' : ''}`;
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', blocked ? 'true' : 'false');
     toggle.disabled = !features.firewall.supported || firewallBusy.has(program);
@@ -711,6 +794,307 @@ function renderNetwork() {
   }
 }
 
+// --- live connections -------------------------------------------------------
+// The same endpoint rows the breakdowns are built from, listed one at a time
+// instead of grouped, with the process that holds each one joined on from the
+// connection snapshot. Two sources, one row: the bytes are measured, the
+// owner is observed, and where the two cannot be joined the owner is left
+// blank rather than guessed.
+
+// 127.0.0.1 and ::1 are this machine talking to itself. Calling that the
+// local network would be wrong in a way that matters: nothing left the box.
+function loopback(address) {
+  return address === '::1' || /^127\./.test(address);
+}
+
+function peerOwners() {
+  const owners = new Map();
+  const cutoff = historyObservedAt / 1000 - 6;
+  for (const row of historyRows) {
+    if (!OPEN_STATES.has(row.state) || row.last_seen < cutoff) continue;
+    const match = /^(?:\[(.+)\]|([^:]+)):(\d+)$/.exec(row.remote || '');
+    if (!match) continue;
+    const key = `${match[1] || match[2]}:${Number(match[3])}`;
+    const held = owners.get(key) || [];
+    if (!held.some(item => item.identity === row.identity)) {
+      held.push({ identity: row.identity, pid: row.pid, name: row.process });
+    }
+    owners.set(key, held);
+  }
+  return owners;
+}
+
+function connectionRows() {
+  const owners = peerOwners();
+  const term = $('conn-search').value.trim().toLowerCase();
+  return livePeers()
+    .filter(row => row.bytes_in + row.bytes_out > 0)
+    .filter(row => connView === 'all' || row.scope === connView)
+    .map(row => {
+      const held = owners.get(`${row.address}:${row.port}`) || [];
+      return { ...row, held, app: held.length ? held[0].name : null };
+    })
+    .filter(row => !term || [row.app, row.address, row.host, row.service,
+      row.country && countryName(row.country)]
+      .some(value => value && String(value).toLowerCase().includes(term)))
+    .sort((a, b) => (b.rx + b.tx) - (a.rx + a.tx)
+      || (b.bytes_in + b.bytes_out) - (a.bytes_in + a.bytes_out));
+}
+
+function twoLineCell(primary, secondary, className) {
+  const cell = document.createElement('div');
+  cell.className = className;
+  const top = document.createElement('b');
+  top.textContent = primary;
+  cell.append(top);
+  if (secondary) {
+    const under = document.createElement('small');
+    under.textContent = secondary;
+    cell.append(under);
+  }
+  cell.title = secondary ? `${primary} · ${secondary}` : primary;
+  return cell;
+}
+
+function renderConnections() {
+  const container = $('conn-rows');
+  container.replaceChildren();
+  if (!features.hosts.supported) {
+    $('conn-count').textContent = '0';
+    return empty(container, reasonFor(features.hosts));
+  }
+  const rows = connectionRows();
+  $('conn-count').textContent = String(rows.length);
+  if (!rows.length) return empty(container, labels[language].noConnections);
+  for (const row of rows.slice(0, 300)) {
+    const element = document.createElement('div');
+    element.className = 'row conn-row';
+    if (row.held.length) {
+      const cell = appCell({ key: row.held[0].identity, name: row.app });
+      if (row.held.length > 1) {
+        const more = document.createElement('small');
+        more.className = 'conn-more';
+        more.textContent = `+${row.held.length - 1}`;
+        more.title = row.held.map(item => `${item.name} (PID ${item.pid})`).join('\n');
+        cell.append(more);
+      }
+      element.append(cell);
+    } else {
+      element.append(twoLineCell(labels[language].unknownApp, null, 'app-name plain'));
+    }
+    const shown = row.address.includes(':') ? `[${row.address}]:${row.port}`
+      : `${row.address}:${row.port}`;
+    element.append(twoLineCell(shown, row.host, 'conn-target'));
+    const service = document.createElement('span');
+    service.textContent = row.service || `${labels[language].port} ${row.port}`;
+    element.append(service);
+    const country = document.createElement('span');
+    country.className = 'conn-country';
+    if (row.country) {
+      country.append(codeChip(row.country));
+      country.append(document.createTextNode(countryName(row.country)));
+    } else {
+      country.textContent = loopback(row.address) ? labels[language].thisMachine
+        : row.scope === 'lan' ? labels[language].localNetwork : '—';
+    }
+    element.append(country);
+    for (const amount of [size(row.bytes_in), size(row.bytes_out)]) {
+      const span = document.createElement('span');
+      span.className = 'numeric';
+      span.textContent = amount;
+      element.append(span);
+    }
+    container.append(element);
+  }
+}
+
+// --- the lasting record -----------------------------------------------------
+
+function usageDays(report, count = 30) {
+  const byDay = new Map(report.days.map(row => [row.day, row]));
+  const pad = value => String(value).padStart(2, '0');
+  const start = new Date(`${report.today}T00:00:00`);
+  const days = [];
+  for (let back = count - 1; back >= 0; back--) {
+    const date = new Date(start);
+    date.setDate(date.getDate() - back);
+    const key = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    const row = byDay.get(key);
+    // A day with no row is a day nothing was recorded, which is not the same
+    // as a day with no traffic; the bar is drawn empty and says so.
+    days.push({ day: key, in: row ? row.in : 0, out: row ? row.out : 0,
+      recorded: Boolean(row) });
+  }
+  return days;
+}
+
+function signatureCell(item) {
+  const span = document.createElement('span');
+  span.className = 'sig';
+  if (!item.signature) {
+    span.textContent = '—';
+    return span;
+  }
+  if (item.signature === 'Valid') {
+    span.classList.add('ok');
+    span.textContent = item.signer || 'Valid';
+  } else if (item.signature === 'NotSigned') {
+    span.classList.add('warn');
+    span.textContent = labels[language].unsigned;
+  } else {
+    span.classList.add('warn');
+    span.textContent = item.signature;
+  }
+  // The word Windows used is kept in the tooltip even when the cell shows the
+  // signer: the status is the fact, the name is the convenience.
+  span.title = item.signer ? `${item.signature} · ${item.signer}` : item.signature;
+  return span;
+}
+
+function renderUsage() {
+  const bars = $('usage-days');
+  const container = $('usage-rows');
+  bars.replaceChildren();
+  container.replaceChildren();
+  if (!features.usage.supported) {
+    for (const id of ['usage-today', 'usage-month', 'usage-all']) $(id).textContent = '—';
+    $('usage-count').textContent = '0';
+    $('usage-note').textContent = '';
+    empty(bars, reasonFor(features.usage));
+    return empty(container, reasonFor(features.usage));
+  }
+  if (usageError) {
+    $('usage-note').textContent = usageError;
+    return empty(container, usageError);
+  }
+  if (!usageReport) return empty(container, labels[language].waiting);
+  $('usage-today').textContent = size(usageReport.totals.today.in + usageReport.totals.today.out);
+  $('usage-month').textContent = size(usageReport.totals.month.in + usageReport.totals.month.out);
+  $('usage-all').textContent = size(usageReport.totals.all.in + usageReport.totals.all.out);
+  $('usage-note').textContent = labels[language].recordNote
+    .replace('{days}', String(usageReport.retentionDays));
+
+  const days = usageDays(usageReport);
+  const ceiling = Math.max(1, ...days.map(day => day.in + day.out));
+  for (const day of days) {
+    const column = document.createElement('div');
+    column.className = `usage-day${day.recorded ? '' : ' blank'}`;
+    const stack = document.createElement('div');
+    stack.className = 'usage-stack';
+    for (const [amount, name] of [[day.in, 'down'], [day.out, 'up']]) {
+      const part = document.createElement('i');
+      part.className = name;
+      part.style.height = `${(amount / ceiling) * 100}%`;
+      stack.append(part);
+    }
+    column.append(stack);
+    column.title = `${day.day}\n${labels[language].download}: ${size(day.in)}\n`
+      + `${labels[language].upload}: ${size(day.out)}`;
+    if (day.day.endsWith('-01') || day.day === usageReport.today) {
+      const tick = document.createElement('small');
+      tick.textContent = day.day.slice(8);
+      column.append(tick);
+    }
+    bars.append(column);
+  }
+
+  const programs = usageReport.programs.filter(item => item.total.in + item.total.out > 0);
+  $('usage-count').textContent = String(programs.length);
+  if (!programs.length) return empty(container, labels[language].noUsageYet);
+  for (const item of programs.slice(0, 200)) {
+    const element = document.createElement('div');
+    element.className = 'row usage-row';
+    element.append(twoLineCell(item.name, item.path, 'app-name plain'));
+    element.append(signatureCell(item));
+    for (const total of [item.today, item.month, item.total]) {
+      const span = document.createElement('span');
+      span.className = 'numeric';
+      span.textContent = total.in + total.out ? size(total.in + total.out) : '—';
+      span.title = `${labels[language].download} ${size(total.in)} · `
+        + `${labels[language].upload} ${size(total.out)}`;
+      element.append(span);
+    }
+    container.append(element);
+  }
+}
+
+async function loadUsage() {
+  try {
+    usageReport = await window.wirecove.usageReport();
+    usageError = null;
+  } catch (error) {
+    usageError = error.message;
+  }
+  if (page === 'usage') renderUsage();
+}
+
+// --- alerts -----------------------------------------------------------------
+// After the fact, and said so. Nothing here held a packet back to ask first;
+// these are things that already happened.
+
+function renderAlerts() {
+  const container = $('alerts-list');
+  container.replaceChildren();
+  $('alerts-note').textContent = labels[language].alertsNote;
+  if (!features.alerts.supported) return empty(container, reasonFor(features.alerts));
+  if (!alerts.length) return empty(container, labels[language].noAlerts);
+  for (const item of alerts.slice(0, 60)) {
+    const element = document.createElement('div');
+    element.className = `alert alert-${item.kind}`;
+    const head = document.createElement('b');
+    head.textContent = item.name || item.path;
+    head.title = item.path;
+    element.append(head);
+    const what = document.createElement('span');
+    what.className = 'alert-kind';
+    const names = { size: 'changedSize', modified: 'changedModified', signer: 'changedSigner' };
+    what.textContent = item.kind === 'binary-changed'
+      ? `${labels[language].binaryChanged} (${(item.changed || [])
+          .map(field => labels[language][names[field]] || field).join(', ')})`
+      : labels[language].firstConnection;
+    element.append(what);
+    const when = document.createElement('small');
+    when.textContent = new Date(item.at).toLocaleString(language);
+    element.append(when);
+    container.append(element);
+  }
+}
+
+async function loadAlerts() {
+  try { alerts = await window.wirecove.readAlerts() || []; }
+  catch (_) { alerts = []; }
+  renderAlerts();
+}
+
+// --- settings ---------------------------------------------------------------
+
+function renderSettings() {
+  const toggle = $('autostart-toggle');
+  const on = Boolean(settings && settings.autostart);
+  toggle.classList.toggle('on', on);
+  toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  toggle.disabled = !features.autostart.supported || settings === null;
+  $('settings-record').textContent = labels[language].recordNote
+    .replace('{days}', String(features.usage.retentionDays || 90));
+}
+
+async function loadSettings() {
+  // Asked of the machine, not remembered: Windows' own startup list can be
+  // changed from outside this application.
+  try { settings = await window.wirecove.readSettings(); }
+  catch (_) { settings = null; }
+  renderSettings();
+}
+
+async function toggleAutostart() {
+  if (!features.autostart.supported) return;
+  const next = !(settings && settings.autostart);
+  $('autostart-toggle').disabled = true;
+  try { settings = { ...(settings || {}), ...await window.wirecove.setAutostart(next) }; }
+  catch (_) { /* unchanged, and the switch re-reads below */ }
+  renderSettings();
+}
+
 function render() {
   const live = freshRows(2600).filter(row => row.state === 'measured');
   const apps = aggregateApps();
@@ -719,6 +1103,7 @@ function render() {
   renderBreakdown();
   if (page === 'apps') renderApps(apps);
   if (page === 'firewall') renderFirewall();
+  if (page === 'connections') renderConnections();
 }
 
 function markSort() {
@@ -747,13 +1132,27 @@ function statusText() {
 
 function translate() {
   document.documentElement.lang = language;
+  // The tray menu lives in the main process and would otherwise be stuck in
+  // whichever language the application started in.
+  window.wirecove.setLanguage(language);
   document.querySelectorAll('[data-i18n]').forEach(el =>
     el.textContent = labels[language][el.dataset.i18n]);
   $('language').textContent = language.toUpperCase();
   $('main-title').textContent = page==='dns' ? 'DNS' : page==='dpi' ? 'DPI'
     : page==='firewall' ? labels[language].protect
     : page==='network' ? labels[language].network
+    : page==='connections' ? labels[language].live
+    : page==='usage' ? labels[language].usage
     : labels[language][page==='apps'?'apps':page==='history'?'history':'networkActivity'];
+  // In a narrow window the bar shows icons only, so each one has to carry
+  // its own name rather than relying on a label that is not there.
+  document.querySelectorAll('.nav[data-page]').forEach(button => {
+    const label = button.querySelector('b');
+    if (label) button.title = label.textContent;
+  });
+  $('conn-search').placeholder = labels[language].connSearch;
+  $('conn-search').setAttribute('aria-label', labels[language].connSearch);
+  $('settings').title = labels[language].settings;
   $('app-search').placeholder = labels[language].search;
   $('app-search').setAttribute('aria-label', labels[language].search);
   $('history-search').placeholder = labels[language].historySearch;
@@ -768,6 +1167,7 @@ function translate() {
   $('fw-search').setAttribute('aria-label', labels[language].search);
   markSort(); fillModes(); renderDpi(); renderDns(); renderHistory(); renderDiagnostic();
   renderFirewall(); renderNetwork();
+  renderConnections(); renderUsage(); renderAlerts(); renderSettings();
   render();
 }
 
@@ -849,6 +1249,7 @@ window.wirecove.onTraffic(measurement => {
        seen: Date.now()});
   }
   renderBreakdown();
+  if (page === 'connections') renderConnections();
   $('status-text').textContent = statusText();
 });
 
@@ -863,6 +1264,9 @@ window.wirecove.onConnections(data => {
   if (data.observedAt) historyObservedAt = data.observedAt;
   if (page === 'history') renderHistory();
   render();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') $('settings-panel').classList.add('hidden');
 });
 
 window.wirecove.onAppIcon(({key,dataUrl}) => {
@@ -886,13 +1290,19 @@ document.querySelectorAll('.nav[data-page]').forEach(button => button.addEventLi
     item.classList.toggle('active', item===button));
   $('overview-page').classList.toggle('hidden', page!=='overview');
   $('apps-page').classList.toggle('hidden', page!=='apps');
+  $('connections-page').classList.toggle('hidden', page!=='connections');
+  $('usage-page').classList.toggle('hidden', page!=='usage');
   $('dns-page').classList.toggle('hidden', page!=='dns');
   $('history-page').classList.toggle('hidden', page!=='history');
   $('dpi-page').classList.toggle('hidden', page!=='dpi');
   $('firewall-page').classList.toggle('hidden', page!=='firewall');
   $('network-page').classList.toggle('hidden', page!=='network');
-  if (page === 'firewall') loadFirewall();
+  if (page === 'firewall') { loadFirewall(); loadAlerts(); }
   if (page === 'network' && !netState && !netBusy) loadNetwork(false);
+  // Re-read every time the page is opened: the figures are banked once a
+  // minute by the process doing the measuring, so a report held from an
+  // earlier visit would be behind.
+  if (page === 'usage') loadUsage();
   translate(); chart();
 }));
 
@@ -922,6 +1332,37 @@ async function loadNetwork(sweep) {
     renderNetwork();
   }
 }
+
+$('conn-search').addEventListener('input', renderConnections);
+document.querySelectorAll('[data-connview]').forEach(button =>
+  button.addEventListener('click', () => {
+    connView = button.dataset.connview;
+    document.querySelectorAll('[data-connview]').forEach(item =>
+      item.classList.toggle('selected', item === button));
+    renderConnections();
+  }));
+
+$('alerts-clear').addEventListener('click', async () => {
+  try { alerts = await window.wirecove.clearAlerts() || []; }
+  catch (_) { /* the list is left as it is rather than cleared on screen only */ }
+  renderAlerts();
+});
+window.wirecove.onAlerts(events => {
+  alerts = [...(events || []), ...alerts].slice(0, 200);
+  if (page === 'firewall') renderAlerts();
+});
+
+// The settings panel is read from the machine each time it opens.
+$('settings').addEventListener('click', () => {
+  $('settings-panel').classList.remove('hidden');
+  loadSettings();
+});
+$('settings-close').addEventListener('click', () =>
+  $('settings-panel').classList.add('hidden'));
+$('settings-panel').addEventListener('click', event => {
+  if (event.target === $('settings-panel')) $('settings-panel').classList.add('hidden');
+});
+$('autostart-toggle').addEventListener('click', toggleAutostart);
 
 $('fw-search').addEventListener('input', renderFirewall);
 document.querySelectorAll('[data-fwview]').forEach(button =>

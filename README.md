@@ -38,13 +38,18 @@ applied honestly, which is why the limitation lists are long.
 ## Windows (`windows/`)
 
 The Windows application observes per-process connections and throughput, breaks
-the same measurement down by host, traffic type, country and LAN/WAN, blocks
-applications through Windows Firewall, lists devices on the local network,
-reads DNS and proxy state, and runs GoodbyeDPI. Full detail, including how each
-number is obtained and what it is worth, is in
+the same measurement down by host, traffic type, country and LAN/WAN, lists
+every open connection with the address behind it, keeps daily and monthly
+usage per application, says when a program connects out for the first time or
+its file changes, blocks applications through Windows Firewall, lists devices
+on the local network, reads DNS and proxy state, and runs GoodbyeDPI. It keeps
+measuring with the window closed, from the notification area. Full detail,
+including how each number is obtained and what it is worth, is in
 [`windows/README.md`](windows/README.md).
 
 ![Wirecove on Windows](windows/preview.png)
+
+![Daily usage per application](windows/preview-usage.png)
 
 What it cannot do, stated here rather than discovered later:
 
@@ -53,7 +58,8 @@ What it cannot do, stated here rather than discovered later:
   Without them the rate columns stay empty and the window says so.
 - **TCP only.** Windows' UDP tables carry no remote address, so UDP - and
   therefore QUIC, and the video calls that use it - is neither counted nor
-  listed. A packet-level source would be a different program.
+  listed. This is the largest known gap: the totals are systematically lower
+  than a router's.
 - **Country means registration, not location.** It comes from the regional
   internet registries' delegation records: which country a block was handed to.
   A provider registered in one country may announce its addresses in another.
@@ -61,8 +67,20 @@ What it cannot do, stated here rather than discovered later:
   bytes were. A program is free to ignore the convention.
 - **Blocking is a decision made in advance.** The switch writes an ordinary
   Windows Firewall rule in a `Wirecove` group. There is no "ask me when
-  something connects": holding a packet until someone answers needs a filtering
-  driver of our own, which this does not have.
+  something connects". Holding a packet until someone answers is possible with
+  the driver this already ships for DPI, but it is the one feature that can
+  take a machine's traffic down if it is got wrong, so it is not here.
+- **Daily usage is only as good as the rates.** It is the same measurement
+  written down once a minute, so without administrator rights there is nothing
+  to write down and the page says so rather than showing zeros. It is kept for
+  ninety days in a plain file in Wirecove's own data folder; nothing is sent
+  anywhere.
+- **Alerts come after the connection, not before it.** A program is reported
+  once it has already connected. Nothing here holds a packet back to ask first.
+- **A signature is not a verdict.** Wirecove reads who signed a program from
+  this machine's own certificate stores and shows Windows' own word for it. It
+  does not ask any reputation or malware service, because that would mean
+  telling someone else's service what is installed on your machine.
 - **No signature.** The installer is unsigned, so the first run meets a
   SmartScreen warning.
 - **DPI applies to the whole machine.** GoodbyeDPI filters at the network
