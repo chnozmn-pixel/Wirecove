@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, session, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -6,6 +6,9 @@ const backend = require('../native');
 const modes = require('../native/dpi/modes');
 
 let window;
+let tray = null;
+let quitting = false;
+let language = 'tr';
 const iconRequests = new Set();
 const iconQueue = [];
 let iconWorkers = 0;
@@ -14,6 +17,14 @@ let mutation = Promise.resolve();
 const capabilities = backend.capabilities();
 const collector = new backend.traffic.Collector(1);
 const timers = [];
+
+// Launching again raises the window that is already running. The smoke check
+// is exempt: it is a self-contained run that has to be able to start while an
+// ordinary window is open.
+if (!process.argv.includes('--smoke') && !app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+app.on('second-instance', () => showWindow());
 
 function send(channel, payload) {
   if (!window?.isDestroyed()) window.webContents.send(channel, payload);
@@ -45,6 +56,72 @@ function drainIcons() {
   }
 }
 
+// Closing the window leaves the measurement running, which is the point of a
+// traffic monitor: a gap in the record is worse than a window nobody is
+// looking at. The tray is how that is made visible - there is always a way
+// back to the window and a way to stop the application for good, and the
+// first time the window is closed the application says what it just did
+// rather than appearing to have quit.
+const TRAY_TEXT = {
+  tr: { show: 'Göster', quit: 'Çıkış', hidden: 'Wirecove arka planda ölçmeye devam ediyor.',
+        hiddenTitle: 'Wirecove kapanmadı', rates: 'Hız ölçümü kapalı' },
+  en: { show: 'Show', quit: 'Quit', hidden: 'Wirecove keeps measuring in the background.',
+        hiddenTitle: 'Wirecove is still running', rates: 'Rate measurement off' }
+};
+
+function words() { return TRAY_TEXT[language] || TRAY_TEXT.tr; }
+
+function showWindow() {
+  if (!window || window.isDestroyed()) return createWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+function buildTrayMenu() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: words().show, click: showWindow },
+    { type: 'separator' },
+    { label: words().quit, click: () => { quitting = true; app.quit(); } }
+  ]));
+}
+
+function createTray() {
+  if (tray) return;
+  const file = path.join(__dirname, '..', '..', 'assets', 'wirecove-mark.png');
+  const image = nativeImage.createFromPath(file);
+  tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
+  tray.setToolTip('Wirecove');
+  buildTrayMenu();
+  tray.on('click', () => {
+    if (window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()) {
+      window.hide();
+    } else {
+      showWindow();
+    }
+  });
+}
+
+function rate(value) {
+  if (value == null) return '—';
+  if (value < 1024) return `${Math.round(value)} B/s`;
+  if (value < 1048576) return `${(value / 1024).toFixed(1)} KB/s`;
+  return `${(value / 1048576).toFixed(2)} MB/s`;
+}
+
+function updateTooltip(measurement) {
+  if (!tray || tray.isDestroyed()) return;
+  if (!capabilities.traffic.supported) return tray.setToolTip(`Wirecove — ${words().rates}`);
+  let incoming = 0, outgoing = 0;
+  for (const row of measurement.processes) {
+    if (row.state !== 'measured') continue;
+    incoming += row.bytes_in_per_second || 0;
+    outgoing += row.bytes_out_per_second || 0;
+  }
+  tray.setToolTip(`Wirecove\n↓ ${rate(incoming)}   ↑ ${rate(outgoing)}`);
+}
+
 function createWindow() {
   window = new BrowserWindow({
     width: 1280, height: 820, minWidth: 960, minHeight: 620,
@@ -52,7 +129,26 @@ function createWindow() {
     icon: path.join(__dirname, '..', '..', 'assets', 'wirecove-mark.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true, nodeIntegration: false, sandbox: true
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      // Chromium slows timers in a hidden window. The measurement is taken in
+      // the main process, but the window still has to add up what it is sent,
+      // and a throttled window would under-report the session totals the
+      // moment it was minimised.
+      backgroundThrottling: false
+    }
+  });
+
+  // A close is a request to get out of the way, not to stop measuring. The
+  // tray menu's Quit is the way out, and so is the window's own quit.
+  window.on('close', event => {
+    if (quitting) return;
+    event.preventDefault();
+    window.hide();
+    if (tray && !tray.isDestroyed() && !window.toldAboutTray) {
+      window.toldAboutTray = true;
+      try {
+        tray.displayBalloon({ title: words().hiddenTitle, content: words().hidden });
+      } catch (_) { /* balloons are a Windows courtesy, not a requirement */ }
     }
   });
   window.loadFile(path.join(__dirname, 'index.html'));
@@ -70,6 +166,7 @@ function startTraffic() {
   if (!capabilities.traffic.supported) return;
   collector.onSample(measurement => {
     send('traffic', measurement);
+    updateTooltip(measurement);
     for (const row of measurement.processes) queueIcon(row.identity, row.pid);
     if (collector.lastError) {
       collector.lastError = null;
@@ -207,6 +304,12 @@ app.whenReady().then(() => {
   ipcMain.handle('scanner:read', () => backend.netscan.neighbours());
   ipcMain.handle('scanner:sweep', () => backend.netscan.sweep());
 
+  ipcMain.on('app:language', (_event, value) => {
+    if (value !== 'tr' && value !== 'en') return;
+    language = value;
+    buildTrayMenu();
+  });
+
   ipcMain.handle('open-site', async (_event, value) => {
     if (typeof value !== 'string' || !/^[a-z0-9.-]{1,253}$/i.test(value)) {
       throw new Error('Invalid domain');
@@ -216,8 +319,15 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  createTray();
   if (process.argv.includes('--smoke')) runSmoke();
 });
+
+app.on('before-quit', () => { quitting = true; });
+// Everything that matters keeps running without a window on Windows, so the
+// usual "last window closed, so quit" is wrong here.
+app.on('window-all-closed', () => { if (!tray) app.quit(); });
+app.on('activate', showWindow);
 
 function runSmoke() {
   const rates = capabilities.traffic.supported;
@@ -284,6 +394,16 @@ function runSmoke() {
             .map(id => document.getElementById(id));
           if (!lists.every(Boolean)) return false;
           const measured = ${rates ? 'true' : 'false'};
+          // A resolved host keeps its address on a line of its own. Run
+          // together they read as one nonsense word, which is how this was
+          // found in the first place.
+          const hosts = [...document.querySelectorAll('#hosts-list .breakdown-row')];
+          const split = hosts.every(row => {
+            const sub = row.querySelector('.breakdown-sub');
+            const label = row.querySelector('.breakdown-label');
+            return !sub || !label || !label.textContent.includes(sub.textContent);
+          });
+          if (!split) return false;
           return lists.every(list => measured
             ? list.querySelectorAll('.breakdown-row').length > 0
             : list.querySelector('.empty') && list.querySelector('.empty').textContent.trim());
@@ -406,6 +526,19 @@ function runSmoke() {
         })()`);
       await shot('dpi');
 
+      results.tray = await (async () => {
+        if (!tray || tray.isDestroyed()) return false;
+        const before = collector.child ? collector.child.pid : null;
+        window.close();
+        const hidden = !window.isDestroyed() && !window.isVisible();
+        // The collector is what keeps measuring; a close that restarted or
+        // stopped it would leave a hole in the record exactly when nobody is
+        // watching the window.
+        const running = collector.child ? collector.child.pid === before : before === null;
+        window.show();
+        return hidden && running;
+      })();
+
       const failed = Object.entries(results).filter(([, ok]) => !ok).map(([name]) => name);
       if (failed.length) throw new Error(`Failed sections: ${failed.join(', ')}`);
       record();
@@ -426,4 +559,3 @@ app.on('before-quit', () => {
   // Never leave the machine filtered by a Wirecove that has quit.
   try { backend.dpi.stop(); } catch (_) { /* best effort */ }
 });
-app.on('window-all-closed', () => app.quit());

@@ -306,6 +306,15 @@ function detailMetric(label, value) {
   item.append(name, number); return item;
 }
 
+// A history row names its peer as text; the measurement knows that peer by
+// address and port. This is the join, and it answers nothing when the two do
+// not match rather than guessing at a near miss.
+function peerFor(remote) {
+  const match = /^(?:\[(.+)\]|([^:]+)):(\d+)$/.exec(remote || '');
+  if (!match) return null;
+  return peers.get(`${match[1] || match[2]}:${Number(match[3])}`) || null;
+}
+
 function renderDetail(apps=aggregateApps()) {
   const item = apps.get(selectedApp);
   if (!item) return closeDetail();
@@ -329,14 +338,29 @@ function renderDetail(apps=aggregateApps()) {
     detailMetric(labels[language].connections, String(item.open)));
   body.append(session);
   const targets = historyRows.filter(row => row.pid===item.pid &&
-    OPEN_STATES.has(row.state) && row.last_seen >= historyObservedAt/1000 - 4).slice(0,8);
+    OPEN_STATES.has(row.state) && row.last_seen >= historyObservedAt/1000 - 4).slice(0,14);
   if (targets.length) {
     const section = document.createElement('div'); section.className='detail-section';
     const heading = document.createElement('h3'); heading.textContent=labels[language].target;
     section.append(heading);
     for (const row of targets) {
       const line = document.createElement('div'); line.className='detail-connection';
-      line.textContent = row.remote; line.title = `${row.local} → ${row.remote}`;
+      const address = document.createElement('b');
+      address.textContent = row.remote;
+      line.append(address);
+      const known = peerFor(row.remote);
+      // Everything after the address is a reading of it, so it is shown as a
+      // second, quieter line rather than mixed into the address itself.
+      const parts = [];
+      if (known?.service) parts.push(known.service);
+      if (known?.country) parts.push(countryName(known.country));
+      if (known?.host) parts.push(known.host);
+      if (parts.length) {
+        const note = document.createElement('small');
+        note.textContent = parts.join('  ·  ');
+        line.append(note);
+      }
+      line.title = `${row.local} → ${row.remote}`;
       section.append(line);
     }
     body.append(section);
@@ -399,6 +423,12 @@ function renderHistory() {
     element.append(appCell({key:row.identity, name:row.process}));
     const target = document.createElement('button'); target.className='history-target';
     target.textContent = row.remote; target.title = `${row.local} → ${row.remote}`;
+    const known = peerFor(row.remote);
+    if (known) {
+      const parts = [known.host, known.service, known.country && countryName(known.country)]
+        .filter(Boolean);
+      if (parts.length) target.title = parts.join('  ·  ');
+    }
     target.addEventListener('click', () => {
       const host = row.remote.replace(/^\[(.+)\]:\d+$/, '$1').replace(/:\d+$/, '');
       $('diagnose-target').value = host; runDiagnostic(host);
@@ -490,13 +520,14 @@ function livePeers() {
   return [...peers.values()];
 }
 
-function groupPeers(rows, keyOf, labelOf) {
+function groupPeers(rows, keyOf, labelOf, subOf) {
   const groups = new Map();
   for (const row of rows) {
     const key = keyOf(row);
     if (key == null) continue;
     const entry = groups.get(key)
-      || {key, label: labelOf(row), total: 0, rate: 0, sockets: 0, code: null};
+      || {key, label: labelOf(row), sub: subOf ? subOf(row) : null,
+          total: 0, rate: 0, sockets: 0, code: null};
     entry.total += row.bytes_in + row.bytes_out;
     entry.rate += (row.bytes_in_per_second || 0) + (row.bytes_out_per_second || 0);
     entry.sockets += row.sockets || 0;
@@ -516,10 +547,21 @@ function renderBreakdownList(container, items, feature) {
     element.className = 'breakdown-row';
     const name = document.createElement('span');
     name.className = 'breakdown-name';
+    // The label and the address it resolved from are two lines, each clipped
+    // on its own. Left as bare text they run together and read as one word.
+    const label = document.createElement('span');
+    label.className = 'breakdown-label';
     const chip = item.code ? codeChip(item.code) : null;
-    if (chip) name.append(chip);
-    name.append(document.createTextNode(item.label));
-    name.title = item.label;
+    if (chip) label.append(chip);
+    label.append(document.createTextNode(item.label));
+    name.append(label);
+    name.title = item.sub ? `${item.label} (${item.sub})` : item.label;
+    if (item.sub) {
+      const sub = document.createElement('small');
+      sub.className = 'breakdown-sub';
+      sub.textContent = item.sub;
+      name.append(sub);
+    }
     const bar = document.createElement('div');
     bar.className = 'breakdown-bar';
     const fill = document.createElement('i');
@@ -536,7 +578,10 @@ function renderBreakdownList(container, items, feature) {
 function renderBreakdown() {
   const rows = livePeers();
   renderBreakdownList($('hosts-list'),
-    groupPeers(rows, row => row.address, row => row.host || row.address),
+    groupPeers(rows, row => row.address, row => row.host || row.address,
+      // The address is shown even when a name came back: the name is reverse
+      // DNS, which is whatever the address holder chose to publish.
+      row => (row.host ? row.address : null)),
     features.hosts);
   renderBreakdownList($('services-list'),
     groupPeers(rows, row => row.service || `:${row.port}`,
@@ -747,6 +792,9 @@ function statusText() {
 
 function translate() {
   document.documentElement.lang = language;
+  // The tray menu lives in the main process and would otherwise be stuck in
+  // whichever language the application started in.
+  window.wirecove.setLanguage(language);
   document.querySelectorAll('[data-i18n]').forEach(el =>
     el.textContent = labels[language][el.dataset.i18n]);
   $('language').textContent = language.toUpperCase();

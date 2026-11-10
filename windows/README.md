@@ -33,6 +33,7 @@ service and nothing leaves the computer.
 | Which country | the regional registries' delegation records, compiled at packaging time | **administrator** |
 | Devices on the local network | the Windows neighbour table, and ICMP echo when the scan button is pressed | none |
 | Per-application blocking | Windows Firewall rules in the `Wirecove` group | **administrator** |
+| Rates while the window is closed | the collector keeps running behind a tray icon | as above |
 | Target test (DNS, TCP, TLS) | Python standard library, with Windows building the certificate chain | none |
 | DPI | GoodbyeDPI with the WinDivert driver | **administrator** |
 
@@ -78,7 +79,11 @@ so rather than presenting them as equally solid:
   the table is missing instead of leaving the panel blank.
 - **Host names** are reverse DNS, looked up on background threads. A name that
   has not come back yet simply is not shown; the address is never dressed up as
-  a name.
+  a name. Where a name did come back, the address it resolved from is shown
+  under it, because reverse DNS is whatever the holder of that address chose to
+  publish and is worth being able to check. The same applies in the
+  per-application panel and the history list, where the address is the primary
+  text and the service, country and name sit beneath it.
 
 **Blocking is a Windows Firewall rule, not a filter of our own.** Wirecove
 installs no network driver to block with. The switch on the Protect page writes
@@ -89,6 +94,17 @@ never opened again, and nothing outside that group is ever touched, so a rule
 the user or their workplace put there is safe. Writing a rule needs
 administrator rights; reading them does not, so the page shows the real state
 either way and the switches are simply not usable without them.
+
+**Closing the window does not stop the measurement.** A traffic monitor that
+only measures while someone is looking at it has a hole in its record exactly
+where the interesting traffic is. Closing the window hides it to the
+notification area and the collector keeps running; the tray icon's tooltip
+carries the current rates, its menu reopens the window, and its Quit is the way
+to actually stop. The first time the window is closed the application says what
+it just did rather than appearing to have quit. Only one Wirecove runs at a
+time: launching again raises the window that is already there, because two
+would each switch collection on and report two different totals for the same
+machine.
 
 **The device list is the neighbour table until you ask for more.** Opening the
 Network page sends nothing: it reads the ARP and neighbour discovery entries

@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('wirecove', {
   pathForPid: pid => ipcRenderer.invoke('apps:path', pid),
   scanNetwork: () => ipcRenderer.invoke('scanner:read'),
   sweepNetwork: () => ipcRenderer.invoke('scanner:sweep'),
+  setLanguage: value => ipcRenderer.send('app:language', value),
   relaunchElevated: () => ipcRenderer.invoke('app:relaunch-elevated'),
   openSite: domain => ipcRenderer.invoke('open-site', domain)
 });
