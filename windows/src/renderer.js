@@ -92,7 +92,13 @@ Object.assign(labels.tr, {
   udpUnattributedNote:'Sahibi belirlenemeyen {amount} bayt var; soket ölçüm anından önce kapanmış. Baytlar gerçek, program satırları bu yüzden alt sınır.',
   udpIncluded:'UDP dahil', udpExcluded:'yalnızca TCP',
   udpStopped:'UDP ölçümü durdu', udpNoRows:'Henüz UDP etkinliği görünmedi',
-  udpRefused:'Bu yol bu makinede açılamıyor'
+  udpRefused:'Bu yol bu makinede açılamıyor',
+  'udpReason.etw.elevation':'Bir izleme oturumu açmak için Wirecove yönetici olarak çalıştırılmalıdır.',
+  'udpReason.windivert.elevation':'WinDivert bir çekirdek sürücüsüdür; yüklenebilmesi için Wirecove yönetici olarak çalıştırılmalıdır.',
+  'udpReason.windivert.missing':'WinDivert bu derlemede yok.',
+  'udpReason.etw.python':'Python çalıştırılamadı.',
+  'udpReason.windivert.python':'Python çalıştırılamadı.',
+  'udpReason.sockets.python':'Python çalıştırılamadı.'
 });
 Object.assign(labels.en, {
   udpTitle:'UDP measurement', udpChoose:'Choose a route',
@@ -109,7 +115,13 @@ Object.assign(labels.en, {
   udpUnattributedNote:'{amount} bytes could not be tied to a program; the socket closed before it was looked up. The bytes are real, which makes the per-application rows a floor.',
   udpIncluded:'UDP included', udpExcluded:'TCP only',
   udpStopped:'UDP measurement stopped', udpNoRows:'No UDP activity seen yet',
-  udpRefused:'This route cannot be opened on this machine'
+  udpRefused:'This route cannot be opened on this machine',
+  'udpReason.etw.elevation':'Opening a trace session needs Wirecove to run as administrator.',
+  'udpReason.windivert.elevation':'WinDivert is a kernel driver; Wirecove has to run as administrator to load it.',
+  'udpReason.windivert.missing':'WinDivert is missing from this build.',
+  'udpReason.etw.python':'Python could not be run.',
+  'udpReason.windivert.python':'Python could not be run.',
+  'udpReason.sockets.python':'Python could not be run.'
 });
 
 const $ = id => document.getElementById(id);
@@ -1157,7 +1169,7 @@ function renderUdpModes() {
     // act on is worse than useless if it is hidden under a description.
     what.textContent = info.supported
       ? labels[language][`udpWhat.${mode}`]
-      : (reasonFor(info) || labels[language].udpRefused);
+      : udpReasonFor(mode, info);
     option.append(name, what);
     if (!option.disabled) option.addEventListener('click', () => chooseUdpMode(mode));
     container.append(option);
@@ -1166,6 +1178,16 @@ function renderUdpModes() {
   const message = (settings && settings.udpError) || udpError;
   error.classList.toggle('hidden', !message);
   error.textContent = message ? `${labels[language].udpStopped}: ${message}` : '';
+}
+
+// Why one route in particular is refused. Keyed by the route as well as the
+// reason: these two both report 'elevation', but for different reasons, and
+// the shared reason table says WinDivert - which has nothing to do with the
+// kernel's event stream. Falls back to what the measurement layer itself
+// said rather than inventing a line.
+function udpReasonFor(mode, info) {
+  return labels[language][`udpReason.${mode}.${info.reasonKey}`]
+    || info.reason || labels[language].udpRefused;
 }
 
 async function chooseUdpMode(mode) {

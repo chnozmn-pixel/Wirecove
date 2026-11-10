@@ -32,6 +32,7 @@ after a crash, because a session left running keeps costing the machine.
 import ctypes
 import ctypes.wintypes
 import socket
+import time
 import struct
 import threading
 
@@ -477,7 +478,6 @@ class Counter:
         return self.identities[pid]
 
     def sample_all(self):
-        import time
         timestamp = time.monotonic()
         with self._lock:
             owners = {pid: list(values) for pid, values in self._by_owner.items()}

@@ -40,7 +40,9 @@ A mode that cannot run says why; none of them is ever reported as working when
 it is not.
 """
 import argparse
+import ctypes
 import json
+import os
 import signal
 import sys
 import time
@@ -114,6 +116,8 @@ def build(mode):
     """The collector for one mode, or a reason it cannot be built."""
     if mode == 'sockets':
         return Sockets(), None
+    # Imported here rather than at the top: loading this module must not pull
+    # in a driver binding or a trace library for a route nobody has chosen.
     if mode == 'etw':
         import udp_etw
         return udp_etw.build()
@@ -125,7 +129,6 @@ def build(mode):
 
 def elevated():
     """Whether this process holds administrator rights."""
-    import ctypes
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
@@ -160,7 +163,6 @@ def available(mode):
             'windivert': 'Opening WinDivert needs administrator rights',
         }[mode]
     if mode == 'windivert':
-        import os
         here = os.path.dirname(os.path.abspath(__file__))
         folder = 'x86_64' if sys.maxsize > 2 ** 32 else 'x86'
         library = os.path.join(here, 'dpi', 'goodbyedpi', folder, 'WinDivert.dll')
