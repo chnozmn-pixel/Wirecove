@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600">
+  <rect width="1200" height="300" fill="#202020"/>
+  <rect y="300" width="1200" height="300" fill="#F3F1ED"/>
+  <line x1="76" y1="300" x2="1124" y2="300" stroke="#D7D3CC" stroke-width="1"/>
+  <g transform="translate(100 103) scale(1.15)">
+    <rect width="80" height="80" rx="17" fill="#FF9A19"/>
+    <path d="M15 24 25 52 40 31 54 52 65 24" fill="none" stroke="#252525" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="15" cy="24" r="4.2" fill="#252525"/><circle cx="65" cy="24" r="4.2" fill="#252525"/>
+  </g>
+  <text x="218" y="172" fill="#F5F3EF" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" letter-spacing="-2.7">Wirecove</text>
+  <g transform="translate(100 403) scale(1.15)">
+    <rect width="80" height="80" rx="17" fill="#FF9A19"/>
+    <path d="M15 24 25 52 40 31 54 52 65 24" fill="none" stroke="#252525" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="15" cy="24" r="4.2" fill="#252525"/><circle cx="65" cy="24" r="4.2" fill="#252525"/>
+  </g>
+  <text x="218" y="472" fill="#272727" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" letter-spacing="-2.7">Wirecove</text>
+  <g transform="translate(1010 116) scale(.6)">
+    <rect width="80" height="80" rx="17" fill="#FF9A19"/>
+    <path d="M15 24 25 52 40 31 54 52 65 24" fill="none" stroke="#252525" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="15" cy="24" r="4.2" fill="#252525"/><circle cx="65" cy="24" r="4.2" fill="#252525"/>
+  </g>
+  <g transform="translate(1010 416) scale(.6)">
+    <rect width="80" height="80" rx="17" fill="#FF9A19"/>
+    <path d="M15 24 25 52 40 31 54 52 65 24" fill="none" stroke="#252525" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="15" cy="24" r="4.2" fill="#252525"/><circle cx="65" cy="24" r="4.2" fill="#252525"/>
+  </g>
+</svg>

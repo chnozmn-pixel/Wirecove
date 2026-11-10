@@ -1,0 +1,20 @@
+name: Checks
+on:
+  push:
+  pull_request:
+jobs:
+  static-and-unit:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - run: node --check src/main.js && node --check src/preload.js && node --check src/renderer.js
+      - run: node --test tests/dns.test.js tests/dpi.test.js
+      - run: PYTHONPATH=native python3 -m unittest discover -s tests -v

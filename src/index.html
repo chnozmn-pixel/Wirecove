@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>Wirecove</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="window-strip"></div>
+      <div class="menu-bar">
+        <div class="brand"><img class="brand-logo" src="../assets/wirecove-mark.svg" alt=""><span id="brand-name">Wirecove</span></div>
+        <nav class="top-nav" aria-label="Ana menü">
+          <button class="nav active" data-page="overview"><span>◫</span><b data-i18n="overview">Genel bakış</b></button>
+          <button class="nav" data-page="apps"><span>▦</span><b data-i18n="apps">Uygulamalar</b></button>
+          <button class="nav" data-page="dns"><span>◎</span><b>DNS</b></button>
+          <button class="nav" data-page="dpi"><span>↗</span><b>DPI</b></button>
+          <button class="nav" data-page="history"><span>◷</span><b data-i18n="history">Geçmiş</b></button>
+        </nav>
+        <div class="top-actions"><button id="language" title="Language">TR</button><button id="theme" title="Theme">☾</button></div>
+      </div>
+    </header>
+    <div class="shell">
+    <main>
+      <div class="content">
+        <div class="heading"><h1 id="main-title">Ağ etkinliği</h1><div class="status-pill"><span class="live-dot"></span><span id="status-text">Başlatılıyor</span></div></div>
+        <div id="warning" class="warning hidden"></div>
+        <div id="overview-page">
+        <div class="overview-grid">
+          <div class="overview-main">
+            <section class="chart-card">
+              <div class="card-heading"><h2 data-i18n="liveTraffic">Canlı trafik</h2><div class="chart-controls"><div class="range-tabs"><button class="selected" data-range="60">1 dk</button><button data-range="300">5 dk</button></div><div class="legend"><span><i class="orange"></i><span data-i18n="download">Alınan</span></span><span><i class="cyan"></i><span data-i18n="upload">Gönderilen</span></span></div></div></div>
+              <div class="chart-plot"><div class="y-axis"><span id="axis-max">—</span><span id="axis-mid">—</span><span>0</span></div><canvas id="chart" aria-label="Traffic chart"></canvas><div id="chart-tooltip" class="chart-tooltip hidden"></div></div>
+              <div class="axis"><span id="time-start">60 sn</span><span id="time-quarter">45 sn</span><span id="time-half">30 sn</span><span id="time-threequarter">15 sn</span><span data-i18n="now">Şimdi</span></div>
+            </section>
+            <section class="stats">
+              <div class="stat"><div class="stat-top"><span data-i18n="download">Alınan</span><span class="stat-icon down">↓</span></div><div class="stat-value" id="rx">—</div></div>
+              <div class="stat"><div class="stat-top"><span data-i18n="upload">Gönderilen</span><span class="stat-icon up">↑</span></div><div class="stat-value" id="tx">—</div></div>
+              <div class="stat"><div class="stat-top"><span data-i18n="activeApps">Aktif uygulama</span><span class="stat-icon">▦</span></div><div class="stat-value" id="app-count">—</div></div>
+            </section>
+          </div>
+          <section class="activity-card"><div class="card-heading"><h2 data-i18n="busyApps">En çok veri kullanan</h2></div><div id="top-apps" class="top-apps"></div></section>
+        </div>
+        <section class="table-card">
+          <div class="card-heading"><h2 data-i18n="processes">Uygulama trafiği</h2><button id="show-all-apps" class="text-button" data-i18n="showAll">Tümünü gör →</button></div>
+          <div class="table-head"><span data-i18n="application">Uygulama / süreç</span><span>PID</span><span data-i18n="download">Alınan</span><span data-i18n="upload">Gönderilen</span><span data-i18n="protocol">Protokol</span></div>
+          <div id="rows" class="rows"><div class="empty" data-i18n="waiting">İlk ölçüm bekleniyor…</div></div>
+        </section>
+        </div>
+        <section id="apps-page" class="apps-page hidden">
+          <div class="apps-toolbar"><input id="app-search" type="search" autocomplete="off" placeholder="Uygulama ara" aria-label="Uygulama ara"><div class="apps-toolbar-right"><div class="view-tabs"><button class="selected" data-view="traffic" data-i18n="withTraffic">Trafiği olanlar</button><button data-view="all" data-i18n="all">Tümü</button></div><span id="apps-count">0</span></div></div>
+          <div class="table-card apps-table">
+            <div class="table-head apps-head">
+              <button data-sort="name" data-i18n="application">Uygulama</button>
+              <button data-sort="rx" data-i18n="download">Alınan</button>
+              <button data-sort="tx" data-i18n="upload">Gönderilen</button>
+              <button data-sort="total" data-i18n="total">Bu oturum</button>
+              <button data-sort="pid">PID</button>
+            </div>
+            <div id="apps-rows" class="apps-rows"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div>
+          </div>
+        </section>
+        <section id="dns-page" class="dns-page hidden">
+          <div class="dns-grid">
+            <section class="dns-card"><h2 data-i18n="dnsServers">Etkin DNS sunucuları</h2><div id="dns-servers" class="dns-servers"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div></section>
+            <section class="dns-card"><h2 data-i18n="systemProxy">Sistem proxy</h2><div id="proxy-state" class="dns-value">—</div><div id="proxy-modes" class="dns-meta"></div></section>
+          </div>
+          <section class="dns-card"><div class="dns-card-head"><h2 data-i18n="resolvers">Resolver listesi</h2><span id="dns-observed" class="dns-meta"></span></div><div id="dns-resolvers" class="dns-resolvers"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div></section>
+        </section>
+        <section id="history-page" class="history-page hidden">
+          <section class="diagnose-card"><h2 data-i18n="connectionTest">Bağlantı testi</h2><form id="diagnose-form"><input id="diagnose-target" type="text" autocomplete="off" placeholder="Alan adı veya IP:port" aria-label="Alan adı veya IP:port"><button id="diagnose-button" type="submit" data-i18n="test">Test et</button></form><div id="diagnose-results" class="diagnose-results hidden"></div></section>
+          <div class="apps-toolbar"><input id="history-search" type="search" autocomplete="off" placeholder="Uygulama veya hedef ara" aria-label="Uygulama veya hedef ara"><div class="apps-toolbar-right"><span id="history-count">0</span><button id="history-clear" class="history-clear" data-i18n="clearHistory">Geçmişi temizle</button></div></div>
+          <div class="table-card history-table"><div class="history-head"><span data-i18n="application">Uygulama</span><span data-i18n="target">Hedef</span><span data-i18n="protocol">Protokol</span><span data-i18n="state">Durum</span><span data-i18n="lastSeen">Son görülen</span></div><div id="history-rows"><div class="empty" data-i18n="waiting">Veri bekleniyor…</div></div></div>
+        </section>
+        <section id="dpi-page" class="dpi-page hidden">
+          <section class="dpi-card dpi-wide"><div class="dpi-card-head"><div><h2 data-i18n="savedSites">Site listesi</h2><p data-i18n="siteRoutingNote">Listedeki alan adlarının TCP bağlantıları yerel DPI üzerinden geçer.</p></div><span id="site-route-state" class="dpi-badge">—</span></div><form id="site-add-form"><input id="site-add-input" type="text" autocomplete="off" placeholder="example.com" aria-label="Alan adı"><button id="site-add-button" class="dpi-primary" type="submit" data-i18n="add">Ekle</button><button id="site-route-toggle" type="button" data-i18n="turnOff">Kapat</button></form><div id="site-add-error" class="dpi-message" role="status"></div><div id="saved-site-rows" class="saved-site-rows"></div></section>
+          <section class="dpi-card dpi-wide"><div class="dpi-card-head"><div><h2 data-i18n="installedApps">Uygulamalar</h2><p data-i18n="appRoutingNote">Seçilen uygulamaların TCP web bağlantıları yerel DPI üzerinden geçer.</p></div><span id="installed-count" class="dpi-badge">—</span></div><div id="dpi-message" class="dpi-message" role="status"></div><input id="installed-search" class="dpi-search" type="search" autocomplete="off" placeholder="Uygulama ara" aria-label="Uygulama ara"><div id="installed-rows" class="installed-rows"></div></section>
+          <section class="dpi-card"><h2 data-i18n="siteTest">Web sitesi testi</h2><p data-i18n="siteScope">Doğrudan ve DPI destekli erişimi karşılaştırır. Tarayıcının bağlantısını değiştirmez.</p><form id="dpi-site-form"><input id="dpi-site-input" type="url" placeholder="https://example.com" aria-label="Web sitesi URL"><button id="dpi-site-button" class="dpi-primary" type="submit" data-i18n="test">Test et</button></form><div id="dpi-site-result" class="dpi-site-result hidden"></div></section>
+        </section>
+      </div>
+    </main>
+    </div>
+  </div>
+  <div id="app-detail" class="detail-backdrop hidden"><section class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title"><div class="detail-head"><h2 id="detail-title">Uygulama</h2><button id="detail-close" aria-label="Kapat">×</button></div><div id="detail-body"></div></section></div>
+  <script src="renderer.js"></script>
+</body>
+</html>
