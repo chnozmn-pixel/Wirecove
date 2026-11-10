@@ -22,7 +22,7 @@ is shared between them, and neither is built or tested by the other's checks.
 | | Where | Runs on | Built with |
 | --- | --- | --- | --- |
 | **macOS** | repository root (`src/`, `native/`) | macOS | Electron + `nettop` + a Network Extension |
-| **Windows** | [`windows/`](windows/) | Windows 10/11 x64 | Electron + TCP EStats + GoodbyeDPI |
+| **Windows** | [`windows/`](windows/) | Windows 10/11 x64 | Electron + TCP EStats + ETW/WinDivert for UDP + GoodbyeDPI |
 
 Each has its own `package.json`, its own tests and its own CI workflow. Change
 one and the other is untouched.
@@ -51,15 +51,22 @@ including how each number is obtained and what it is worth, is in
 
 ![Daily usage per application](windows/preview-usage.png)
 
+![Choosing how UDP is measured](windows/preview-udp.png)
+
 What it cannot do, stated here rather than discovered later:
 
 - **Rates need administrator rights.** Per-process bytes come from the kernel's
   TCP Extended Statistics, and switching collection on is a privileged call.
   Without them the rate columns stay empty and the window says so.
-- **TCP only.** Windows' UDP tables carry no remote address, so UDP - and
-  therefore QUIC, and the video calls that use it - is neither counted nor
-  listed. This is the largest known gap: the totals are systematically lower
-  than a router's.
+- **UDP is measured only if you choose a route for it, and it is off by
+  default.** TCP is counted exactly, because a connection is an object the
+  kernel hangs a counter on. UDP has no connection and no counter, so there is
+  no single answer - only three routes that cost different things. Listing
+  which programs hold UDP sockets needs no rights but yields no byte figures;
+  reading the kernel's own network events, or sniffing packets with WinDivert,
+  yields the bytes and the far end but needs administrator rights. With UDP
+  off, the totals are TCP's alone and will be lower than a router's; the usage
+  page states which of the two it is showing.
 - **Country means registration, not location.** It comes from the regional
   internet registries' delegation records: which country a block was handed to.
   A provider registered in one country may announce its addresses in another.
