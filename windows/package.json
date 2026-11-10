@@ -1,0 +1,89 @@
+{
+  "name": "wirecove-windows",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wirecove for Windows: read-only connection, DNS and proxy observation with the GoodbyeDPI engine",
+  "main": "src/main.js",
+  "os": [
+    "win32"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "npm run test:js && npm run test:py",
+    "test:js": "node --test \"tests/*.test.js\"",
+    "test:py": "python tests/run.py",
+    "fetch:python": "node scripts/fetch-python.js x64",
+    "fetch:geo": "node scripts/fetch-geo.js",
+    "prepack": "node scripts/prepare-build.js",
+    "dist": "npm run prepack && electron-builder --win --x64",
+    "dist:dir": "npm run prepack && electron-builder --win --x64 --dir"
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "dev.wirecove.windows",
+    "productName": "Wirecove",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "native/**/*",
+      "vendor/**/*",
+      "package.json",
+      "!**/__pycache__/**",
+      "!**/*.pyc",
+      "!**/*.pdb",
+      "!**/*.dist-info/**",
+      "!vendor/*.zip",
+      "native/geo/ranges.bin"
+    ],
+    "extraResources": [
+      {
+        "from": "../assets",
+        "to": "assets",
+        "filter": [
+          "wirecove-mark.svg",
+          "wirecove-mark.png"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "native/**/*",
+      "vendor/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Wirecove-Setup-${version}-${arch}.${ext}",
+      "shortcutName": "Wirecove"
+    },
+    "portable": {
+      "artifactName": "Wirecove-${version}-${arch}-portable.${ext}"
+    }
+  }
+}

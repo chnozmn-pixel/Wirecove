@@ -1,5 +1,78 @@
 # Wirecove
 
+Wirecove shows what the programs on a machine are actually sending and
+receiving, and gives a small number of controls over it. Everything on screen
+is read from the machine itself: nothing is sampled from a service, nothing
+leaves the computer, and no figure is shown that was not measured.
+
+> ### This is in development. Expect problems.
+>
+> Neither application has been released, neither is signed, and neither has
+> been run on machines other than the two they were written on. Things will
+> break, numbers may be wrong, and the interface will keep changing. Do not
+> put this on a machine that matters to you, and read the limitations below
+> before you trust anything it tells you.
+
+## Two applications, one repository
+
+These are **two separate applications** that share a name, a design and a
+measurement philosophy. They are not one application with two builds: no code
+is shared between them, and neither is built or tested by the other's checks.
+
+| | Where | Runs on | Built with |
+| --- | --- | --- | --- |
+| **macOS** | repository root (`src/`, `native/`) | macOS | Electron + `nettop` + a Network Extension |
+| **Windows** | [`windows/`](windows/) | Windows 10/11 x64 | Electron + TCP EStats + GoodbyeDPI |
+
+Each has its own `package.json`, its own tests and its own CI workflow. Change
+one and the other is untouched.
+
+## The rule both of them follow
+
+**A control is enabled only when the feature genuinely works on this machine.**
+Where something cannot be measured or cannot be done, the application says
+which thing and why, in one line. It does not draw an empty graph, a zero, a
+dead switch or a plausible-looking estimate. Most of what follows is that rule
+applied honestly, which is why the limitation lists are long.
+
+## Windows (`windows/`)
+
+The Windows application observes per-process connections and throughput, breaks
+the same measurement down by host, traffic type, country and LAN/WAN, blocks
+applications through Windows Firewall, lists devices on the local network,
+reads DNS and proxy state, and runs GoodbyeDPI. Full detail, including how each
+number is obtained and what it is worth, is in
+[`windows/README.md`](windows/README.md).
+
+![Wirecove on Windows](windows/preview.png)
+
+What it cannot do, stated here rather than discovered later:
+
+- **Rates need administrator rights.** Per-process bytes come from the kernel's
+  TCP Extended Statistics, and switching collection on is a privileged call.
+  Without them the rate columns stay empty and the window says so.
+- **TCP only.** Windows' UDP tables carry no remote address, so UDP - and
+  therefore QUIC, and the video calls that use it - is neither counted nor
+  listed. A packet-level source would be a different program.
+- **Country means registration, not location.** It comes from the regional
+  internet registries' delegation records: which country a block was handed to.
+  A provider registered in one country may announce its addresses in another.
+- **Traffic type is the port's usual service**, not a claim about what the
+  bytes were. A program is free to ignore the convention.
+- **Blocking is a decision made in advance.** The switch writes an ordinary
+  Windows Firewall rule in a `Wirecove` group. There is no "ask me when
+  something connects": holding a packet until someone answers needs a filtering
+  driver of our own, which this does not have.
+- **No signature.** The installer is unsigned, so the first run meets a
+  SmartScreen warning.
+- **DPI applies to the whole machine.** GoodbyeDPI filters at the network
+  layer; a mode cannot be limited to one site or one application.
+
+There are no published releases yet. The installer is built locally - see
+[Build the installer](windows/README.md#build-the-installer).
+
+## macOS (repository root)
+
 Open-source desktop network control project. This is the first experimental
 macOS build. It combines a shared Electron interface with a macOS `nettop`
 collector. Overview shows live TCP/UDP rates, an interactive 1/5-minute graph
@@ -158,8 +231,15 @@ The test does not validate UDP/HTTP/3, browser use, blocked sites, or
 application-specific routing. The activated extension stays installed, while
 the test's transparent proxy configuration is removed on exit.
 
-## GitHub
+## Repository
 
-The local Git repository uses `main`. MIT license, `.gitignore` and a CI workflow
-are included. No GitHub remote has been set yet. Once the owner and repository
-are chosen, create a public GitHub repository named `wirecove` and push `main`.
+`main` is the default branch. MIT licensed. Each application has its own CI
+workflow under `.github/workflows/`, scoped by path so that a change to one
+does not run the other's checks:
+
+- `checks.yml` - the macOS application
+- `windows-checks.yml` - the Windows application
+
+Neither workflow runs the smoke check. That one opens the real window and
+asserts the figures come from live traffic, which a fresh CI runner does not
+have; it stays a manual check on a real machine.
