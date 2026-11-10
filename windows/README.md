@@ -319,7 +319,17 @@ separate test.
 
 - Rates without administrator rights. There is no counter for it: it would mean
   an elevated helper service that the unprivileged window talks to.
-- UDP volume, which needs a packet-level source rather than a connection table.
+- UDP volume, and therefore QUIC - a large share of what a browser, a video
+  call or a game actually moves. This is the biggest gap in the figures: the
+  totals are systematically low and will not match a router's. There are two
+  ways in, both needing administrator rights, which the counters already do:
+  the kernel's own network events (ETW `Microsoft-Windows-Kernel-Network`
+  carries UDP bytes with the owning process, which is exactly the shape needed
+  but awkward to consume), or sniffing with WinDivert, which this build already
+  carries, and joining each datagram's local port to `GetExtendedUdpTable`.
+  WinDivert is the shorter path because the driver is already here and already
+  proven; the risk is cost per packet, so it would have to be filtered to UDP
+  and read in batches.
 - Store (MSIX/UWP) applications in the inventory; they have no plain `.exe`
   path and need a package-family lookup.
 - A live test of the DPI engine under administrator rights on a line that is
@@ -328,8 +338,12 @@ separate test.
 - Asking before a connection rather than blocking after it. GlassWire's "ask to
   connect" holds the first packet of a new connection until the person answers.
   Windows Firewall cannot do that for an application it is not already
-  blocking, so it would need a filtering driver of our own. Blocking here is
-  therefore a decision made in advance, and the page does not pretend otherwise.
+  blocking. It is not out of reach - WinDivert, which this build already ships
+  for the DPI engine, can hold and release packets - but it is the one feature
+  here that can take the whole machine's traffic down if it is got wrong, and
+  attributing a packet to a process at the moment it leaves is a race that has
+  to be won every time. Blocking is therefore a decision made in advance, and
+  the page does not pretend otherwise.
 - A reputation or malware verdict per application. Scoring and VirusTotal
   lookups mean sending a hash of the user's programs to someone else's service,
   on someone else's account. That is a different product decision, not a

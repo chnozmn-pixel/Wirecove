@@ -53,7 +53,8 @@ What it cannot do, stated here rather than discovered later:
   Without them the rate columns stay empty and the window says so.
 - **TCP only.** Windows' UDP tables carry no remote address, so UDP - and
   therefore QUIC, and the video calls that use it - is neither counted nor
-  listed. A packet-level source would be a different program.
+  listed. This is the largest known gap: the totals are systematically lower
+  than a router's.
 - **Country means registration, not location.** It comes from the regional
   internet registries' delegation records: which country a block was handed to.
   A provider registered in one country may announce its addresses in another.
@@ -61,8 +62,9 @@ What it cannot do, stated here rather than discovered later:
   bytes were. A program is free to ignore the convention.
 - **Blocking is a decision made in advance.** The switch writes an ordinary
   Windows Firewall rule in a `Wirecove` group. There is no "ask me when
-  something connects": holding a packet until someone answers needs a filtering
-  driver of our own, which this does not have.
+  something connects". Holding a packet until someone answers is possible with
+  the driver this already ships for DPI, but it is the one feature that can
+  take a machine's traffic down if it is got wrong, so it is not here.
 - **No signature.** The installer is unsigned, so the first run meets a
   SmartScreen warning.
 - **DPI applies to the whole machine.** GoodbyeDPI filters at the network
