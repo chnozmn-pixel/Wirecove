@@ -1,0 +1,12 @@
+# Derived, not committed: fetched or generated before packaging.
+vendor/
+build/
+dist/
+
+# Written by the checks, not source.
+*-smoke.png
+smoke-result.json
+firewall-verify.json
+
+# Derived, not committed: built from the registries before packaging.
+geo/

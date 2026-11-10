@@ -1,0 +1,55 @@
+# The Windows application's own checks. The macOS application has its own
+# workflow; neither job builds or tests the other, because the two are separate
+# applications that happen to share a repository.
+name: Windows checks
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-checks.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/windows-checks.yml'
+jobs:
+  static-and-unit:
+    # iphlpapi, the process tables and the PowerShell queries only exist here,
+    # so the suite is meaningless on any other runner.
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - name: Syntax
+        run: node --check src/main.js; node --check src/preload.js; node --check src/renderer.js; node --check native/index.js; node --check native/dns.js; node --check native/traffic.js; node --check native/firewall.js; node --check native/netscan.js; node --check native/unpacked.js; node --check native/powershell.js; node --check native/python.js; node --check native/dpi/control.js; node --check native/dpi/modes.js; node --check scripts/fetch-python.js; node --check scripts/fetch-geo.js; node --check scripts/prepare-build.js
+      - name: JavaScript tests
+        run: npm run test:js
+      - name: Python tests
+        run: python tests/run.py
+      # The country table is fetched, not committed. Building it here is what
+      # keeps the registries' format from changing under the build unnoticed.
+      - name: Country table
+        run: npm run fetch:geo
+      - name: PowerShell syntax
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in Get-ChildItem native -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { throw "$($file.Name): $($errors[0].Message)" }
+          }
+        shell: pwsh
+      # The smoke run is not here on purpose: it opens the real window and
+      # asserts that the figures come from live traffic, which a fresh runner
+      # does not have. It stays a manual check on a real machine.
