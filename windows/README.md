@@ -40,6 +40,8 @@ service and nothing leaves the computer.
 | Who signed a program | `Get-AuthenticodeSignature`, against this machine's certificate stores | none |
 | Start with Windows | the standard per-user startup entry | none |
 | Target test (DNS, TCP, TLS) | Python standard library, with Windows building the certificate chain | none |
+| Which programs are using UDP | `GetExtendedUdpTable`, when the UDP route is set to sockets | none |
+| UDP bytes per program, and the other end | the kernel's own network events, or the WinDivert driver sniffing | **administrator** |
 | DPI | GoodbyeDPI with the WinDivert driver | **administrator** |
 
 ### What it measures, and what it leaves out
@@ -56,10 +58,58 @@ Performance counters such as `\Process(*)\IO Read Bytes/sec` are deliberately
 **not** used as a substitute: they mix disk and pipe traffic with network
 traffic and would put a wrong number on screen.
 
-The figures are TCP payload only. UDP — so QUIC, and the video calls that use
-it — is not counted, and neither are TCP/IP headers, so what is shown is what
-the application sent and received, which is lower than what a packet capture at
-the interface would see.
+These figures are TCP payload. TCP/IP headers are never counted, so what is
+shown is what the application sent and received, which is lower than what a
+packet capture at the interface would see. Whether UDP is in the total depends
+on the route chosen for it, and the usage page says which of the two it is
+showing rather than leaving the reader to assume.
+
+![Choosing how UDP is measured](preview-udp.png)
+
+**UDP is measured by whichever of three routes you choose, or not at all.**
+TCP can be counted exactly because a connection is an object the kernel keeps
+and RFC 4898 hangs a counter on it. UDP has no connection, so there is no
+counter to read: the UDP tables say which process holds which local port, and
+nothing about how much moved or who the other end is. That leaves no single
+answer, only routes that cost different things, so all three are offered and
+the choice between them — including the choice not to measure at all — is made
+in settings rather than here.
+
+- **Off.** Nothing is read. The totals are TCP only, and the usage page says
+  so. This is the default, because the other three all read more of the
+  machine than the person may have asked for.
+- **Sockets only.** The UDP tables and nothing else: which program holds which
+  port open, and how many sockets it has. No byte figures, because there are
+  none to read — the rows carry no number rather than a zero, since a zero
+  would be a claim that the program moved nothing. Needs no administrator
+  rights.
+- **Windows' own event stream.** `Microsoft-Windows-Kernel-Network` in real
+  time. The kernel announces every datagram with the owning process, the byte
+  count and both endpoints, so this is a measurement in the same sense the TCP
+  side is. Nothing is intercepted and no driver of ours is in the packet path.
+  An event id filter is applied kernel-side, which is what makes it affordable
+  to leave running: without it the session would also carry one event per TCP
+  segment — thousands a second on a fast download, every one of them discarded
+  on arrival. Needs administrator rights.
+- **Sniffing packets.** The WinDivert driver that already ships for the DPI
+  engine, opened in sniff mode and receive-only: it is handed a copy and the
+  original packet carries on regardless, so being slow here cannot hold up the
+  machine's traffic, and this route has no way to modify, drop or reinject
+  anything. What it gives up is the owner. A packet carries addresses and
+  ports, not a process, so the local endpoint has to be joined back through
+  the UDP table — and a socket that has already closed is no longer in it.
+  Those bytes are real, so they are kept in an unattributed total and shown as
+  such; the per-program rows are a floor, and the card says so. Needs
+  administrator rights.
+
+The byte figure means the same thing in all of them: the UDP payload, without
+the datagram's own eight byte header and without the IP header. That is the
+same quantity the TCP side reports, so the two can be added.
+
+Measured against traffic whose size was known in advance, the event stream
+matched to the byte. The sniffer matched too, once the join to a process used
+the local address as well as the port — keyed on the port number alone it put
+one program's datagrams under another and read high.
 
 **The four breakdowns are one measurement, read four ways.** Every connection
 has a remote address and a port, so the same byte counters that produce the
@@ -73,9 +123,10 @@ so rather than presenting them as equally solid:
 - **LAN or WAN** is read off the address itself and is exact.
 - **Traffic type** is the service the remote port is conventionally used for.
   A program is free to ignore the convention, so the column is the port's usual
-  service, not a claim about what the bytes were. Because the measurement is
-  TCP only, the UDP services a packet-level tool would show — DNS, mDNS, SSDP,
-  QUIC — do not appear here at all.
+  service, not a claim about what the bytes were. The UDP services a
+  packet-level tool would show — DNS, mDNS, SSDP, QUIC — appear here only when
+  a UDP route that counts bytes is running; with UDP off, this breakdown is
+  TCP's alone.
 - **Country** comes from the five regional internet registries' own delegation
   files, which state which country an address block was handed to. That is not
   where the machine is: a provider registered in one country may announce its
@@ -167,10 +218,14 @@ and the result says which of the two answered. Revocation is deliberately not
 requested, so an unreachable responder cannot turn into a difference between
 the two answers.
 
-**The connection list is TCP only.** Windows' UDP tables
-(`MIB_UDPROW_OWNER_PID`) carry a local endpoint and an owning PID but no remote
-address, even for connected sockets. There is no peer to record, so UDP rows
-are skipped rather than written with an invented one.
+![UDP bytes per application, from the packet sniffer](preview-udp-bytes.png)
+
+**The connection list is TCP only, and UDP has a card of its own.** Windows'
+UDP tables (`MIB_UDPROW_OWNER_PID`) carry a local endpoint and an owning PID
+but no remote address, even for connected sockets. There is no peer to put in a
+connection row, so UDP is not written into one with an invented peer; what is
+known about it is shown separately, under the heading of whichever route is
+running.
 
 **A process whose identity cannot be read is skipped.** A PID alone is not an
 identity, because Windows reuses it. Each row is keyed by PID plus the process
@@ -360,17 +415,13 @@ separate test.
 
 - Rates without administrator rights. There is no counter for it: it would mean
   an elevated helper service that the unprivileged window talks to.
-- UDP volume, and therefore QUIC - a large share of what a browser, a video
-  call or a game actually moves. This is the biggest gap in the figures: the
-  totals are systematically low and will not match a router's. There are two
-  ways in, both needing administrator rights, which the counters already do:
-  the kernel's own network events (ETW `Microsoft-Windows-Kernel-Network`
-  carries UDP bytes with the owning process, which is exactly the shape needed
-  but awkward to consume), or sniffing with WinDivert, which this build already
-  carries, and joining each datagram's local port to `GetExtendedUdpTable`.
-  WinDivert is the shorter path because the driver is already here and already
-  proven; the risk is cost per packet, so it would have to be filtered to UDP
-  and read in batches.
+- UDP in the history and the breakdowns. The routes that count bytes report
+  the other end of each datagram, but only the live card uses it: the
+  connection history, the per-host and per-country panels are still built from
+  TCP alone.
+- A UDP route that needs no administrator rights. There is none to have: the
+  two that count bytes both need a trace session or a driver, and the one that
+  does not is limited to saying which program holds a port.
 - Store (MSIX/UWP) applications in the inventory; they have no plain `.exe`
   path and need a package-family lookup.
 - A live test of the DPI engine under administrator rights on a line that is
