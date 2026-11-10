@@ -7,9 +7,12 @@ administrator rights are needed and nothing is changed.
 
 Scope limit, stated rather than hidden: Windows' UDP tables
 (MIB_UDPROW_OWNER_PID) carry a local endpoint and an owning PID but no remote
-address, even for connected sockets. There is no remote endpoint to record, so
-UDP rows are skipped instead of being written with an invented peer. Windows
-connection history is therefore TCP only.
+address and no byte count, even for connected sockets. There is no remote
+endpoint to record, so `snapshot` skips UDP rather than writing an invented
+peer, and Windows connection history is TCP only. `udp_sockets` reads the same
+tables for what they do hold - which process is holding which local port open -
+so the interface can say a program is using UDP without inventing a figure for
+how much it moved.
 """
 import ctypes
 import ctypes.wintypes
@@ -19,6 +22,7 @@ import sys
 AF_INET = 2
 AF_INET6 = 23
 TCP_TABLE_OWNER_PID_ALL = 5
+UDP_TABLE_OWNER_PID = 1
 
 TCP_STATES = {
     1: 'CLOSED', 2: 'LISTEN', 3: 'SYN_SENT', 4: 'SYN_RCVD', 5: 'ESTABLISHED',
@@ -42,6 +46,16 @@ class MIB_TCP6ROW_OWNER_PID(ctypes.Structure):
                 ('dwState', DWORD), ('dwOwningPid', DWORD)]
 
 
+class MIB_UDPROW_OWNER_PID(ctypes.Structure):
+    _fields_ = [('dwLocalAddr', DWORD), ('dwLocalPort', DWORD),
+                ('dwOwningPid', DWORD)]
+
+
+class MIB_UDP6ROW_OWNER_PID(ctypes.Structure):
+    _fields_ = [('ucLocalAddr', ctypes.c_ubyte * 16), ('dwLocalScopeId', DWORD),
+                ('dwLocalPort', DWORD), ('dwOwningPid', DWORD)]
+
+
 def _port(value):
     """iphlpapi stores ports in network byte order inside a DWORD."""
     return socket.ntohs(value & 0xFFFF)
@@ -51,29 +65,58 @@ def _endpoint(address, port):
     return f'[{address}]:{port}' if ':' in address else f'{address}:{port}'
 
 
-def _table(family, row_type):
-    """Call GetExtendedTcpTable twice: once for the size, once for the rows.
+def _query(name, family, row_type, table_kind):
+    """Call one of the GetExtended*Table pair twice: once for the size, once
+    for the rows.
 
     The table can grow between the two calls (a connection opens), so the
     buffer is retried a few times rather than parsed at a stale size.
     """
     iphlpapi = ctypes.WinDLL('iphlpapi', use_last_error=True)
+    function = getattr(iphlpapi, name)
     size = DWORD(0)
     for _ in range(5):
-        iphlpapi.GetExtendedTcpTable(None, ctypes.byref(size), False,
-                                     family, TCP_TABLE_OWNER_PID_ALL, 0)
+        function(None, ctypes.byref(size), False, family, table_kind, 0)
         buffer = ctypes.create_string_buffer(max(size.value, ctypes.sizeof(DWORD)))
-        result = iphlpapi.GetExtendedTcpTable(buffer, ctypes.byref(size), False,
-                                              family, TCP_TABLE_OWNER_PID_ALL, 0)
+        result = function(buffer, ctypes.byref(size), False,
+                          family, table_kind, 0)
         if result == 122:  # ERROR_INSUFFICIENT_BUFFER: grew, ask again
             continue
         if result != 0:
-            raise OSError(f'GetExtendedTcpTable failed ({result})')
+            raise OSError(f'{name} failed ({result})')
         count = DWORD.from_buffer_copy(buffer.raw[:ctypes.sizeof(DWORD)]).value
         rows = (row_type * count).from_buffer_copy(
             buffer.raw[ctypes.sizeof(DWORD):ctypes.sizeof(DWORD) + count * ctypes.sizeof(row_type)])
         return list(rows)
-    raise OSError('GetExtendedTcpTable kept growing')
+    raise OSError(f'{name} kept growing')
+
+
+def _table(family, row_type):
+    """Every TCP connection the machine has, with the PID that owns it."""
+    return _query('GetExtendedTcpTable', family, row_type, TCP_TABLE_OWNER_PID_ALL)
+
+
+def _udp_table(family, row_type):
+    """Every UDP socket the machine holds open, with the PID that owns it."""
+    return _query('GetExtendedUdpTable', family, row_type, UDP_TABLE_OWNER_PID)
+
+
+def udp_sockets():
+    """(pid, family, local address, local port) for every open UDP socket.
+
+    This is the whole of what Windows will say about UDP without a trace or a
+    packet capture: who holds which local port. There is deliberately no byte
+    count and no remote address here, because the tables carry neither.
+    """
+    rows = []
+    for row in _udp_table(AF_INET, MIB_UDPROW_OWNER_PID):
+        address = socket.inet_ntop(socket.AF_INET,
+                                   row.dwLocalAddr.to_bytes(4, 'little'))
+        rows.append((row.dwOwningPid, 4, address, _port(row.dwLocalPort)))
+    for row in _udp_table(AF_INET6, MIB_UDP6ROW_OWNER_PID):
+        address = socket.inet_ntop(socket.AF_INET6, bytes(row.ucLocalAddr))
+        rows.append((row.dwOwningPid, 6, address, _port(row.dwLocalPort)))
+    return rows
 
 
 def process_names():
