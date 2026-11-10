@@ -31,7 +31,7 @@ jobs:
           python-version: '3.13'
       - run: npm ci
       - name: Syntax
-        run: node --check src/main.js; node --check src/preload.js; node --check src/renderer.js; node --check native/index.js; node --check native/dns.js; node --check native/traffic.js; node --check native/firewall.js; node --check native/netscan.js; node --check native/unpacked.js; node --check native/powershell.js; node --check native/python.js; node --check native/dpi/control.js; node --check native/dpi/modes.js; node --check scripts/fetch-python.js; node --check scripts/fetch-geo.js; node --check scripts/prepare-build.js
+        run: node --check src/main.js; node --check src/preload.js; node --check src/renderer.js; node --check native/index.js; node --check native/dns.js; node --check native/traffic.js; node --check native/firewall.js; node --check native/netscan.js; node --check native/ledger.js; node --check native/signature.js; node --check native/unpacked.js; node --check native/powershell.js; node --check native/python.js; node --check native/dpi/control.js; node --check native/dpi/modes.js; node --check scripts/fetch-python.js; node --check scripts/fetch-geo.js; node --check scripts/prepare-build.js
       - name: JavaScript tests
         run: npm run test:js
       - name: Python tests
