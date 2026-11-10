@@ -12,7 +12,11 @@ on:
       - 'windows/**'
       - '.github/workflows/windows-checks.yml'
 jobs:
-  static-and-unit:
+  # The job's name is what GitHub shows as the check, and what a
+  # required-check rule matches on. The macOS workflow's job is called
+  # static-and-unit, so this one is named apart from it: a rule naming
+  # one must never be satisfied by the other having passed.
+  windows-static-and-unit:
     # iphlpapi, the process tables and the PowerShell queries only exist here,
     # so the suite is meaningless on any other runner.
     runs-on: windows-latest
