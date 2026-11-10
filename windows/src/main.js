@@ -16,12 +16,17 @@ let snapshotBusy = false;
 let mutation = Promise.resolve();
 const capabilities = backend.capabilities();
 const collector = new backend.traffic.Collector(1);
+// UDP is measured only while the user has chosen a route for it, so this
+// collector starts life switched off and is told what to do afterwards.
+const udpCollector = new backend.udp.Collector(1);
 const timers = [];
 
 // The record that outlives this run: per-day bytes per program, and what
 // each program's file looked like the first time it was seen going out.
 let ledger = null;
 let alerts = [];
+let udpMode = 'off';
+let udpLatest = null;
 const previousTotals = new Map();   // identity -> [bytes in, bytes out] last seen
 const pendingUsage = new Map();     // identity -> bytes moved since the last bank
 const pathByPid = new Map();        // pid -> executable path, or null if unreadable
@@ -154,10 +159,19 @@ function resolvePath(pid) {
     .finally(() => pathPending.delete(pid));
 }
 
-function accumulate(processes) {
+// `protocol` separates the two counter spaces. TCP and UDP report the same
+// process under the same identity, and sharing one map would have each
+// overwrite the other's previous reading: every difference would then be taken
+// against the wrong number. The pending bucket stays keyed by identity alone,
+// because one program's TCP and UDP bytes belong on one row of the record.
+function accumulate(processes, protocol) {
   for (const row of processes) {
-    const previous = previousTotals.get(row.identity);
-    previousTotals.set(row.identity, [row.bytes_in, row.bytes_out]);
+    // A row with no byte count is not a measurement of nothing, it is the
+    // absence of one. The sockets mode reports exactly this.
+    if (row.bytes_in === null || row.bytes_out === null) continue;
+    const counterKey = `${protocol}:${row.identity}`;
+    const previous = previousTotals.get(counterKey);
+    previousTotals.set(counterKey, [row.bytes_in, row.bytes_out]);
     // Only a measured row, and only a pair of readings, is a difference.
     // Anything else would be banking a number nobody counted.
     if (row.state !== 'measured' || !previous) continue;
@@ -274,6 +288,32 @@ function autostart(value) {
   catch (_) { return false; }
 }
 
+// The chosen UDP route. Stored so it survives a restart, but never applied
+// just because it was stored: a mode this machine refuses is reported as
+// refused instead of being started and left to fail quietly.
+function setUdpMode(value) {
+  const mode = String(value || 'off');
+  const known = capabilities.udp.modes[mode];
+  if (!known) throw new Error(`No such UDP mode: ${mode}`);
+  if (!known.supported) {
+    return { mode: udpMode, refused: mode, reasonKey: known.reasonKey,
+             reason: known.reason };
+  }
+  udpMode = mode;
+  udpLatest = null;
+  // Differences taken against the old mode's counters would be meaningless:
+  // a new route starts its own count from zero.
+  for (const key of [...previousTotals.keys()]) {
+    if (key.startsWith('udp:')) previousTotals.delete(key);
+  }
+  udpCollector.setMode(mode);
+  if (ledger) {
+    ledger.setting('udpMode', mode);
+    ledger.save();
+  }
+  return { mode: udpMode, refused: null, reasonKey: null, reason: null };
+}
+
 function createWindow() {
   window = new BrowserWindow({
     width: 1400, height: 840, minWidth: 960, minHeight: 620,
@@ -316,11 +356,30 @@ function createWindow() {
 }
 
 function startTraffic() {
+  // UDP first, and outside the TCP guard: the two measurements are separate,
+  // and a machine where the TCP counters are refused can still list UDP
+  // sockets. Tying them together would hide a feature that works.
+  udpCollector.onSample(measurement => {
+    udpLatest = measurement;
+    send('udp', measurement);
+    // Only a mode that actually counts bytes is banked. The sockets mode
+    // reports null, which `accumulate` skips, but the record should not depend
+    // on that for its correctness.
+    if (capabilities.udp.modes[measurement.mode]?.bytes) {
+      accumulate(measurement.processes, 'udp');
+    }
+  });
+  timers.push(setInterval(() => {
+    if (udpCollector.lastError && udpMode !== 'off') {
+      send('udp-status', { mode: udpMode, error: udpCollector.lastError });
+    }
+  }, 5000));
+
   if (!capabilities.traffic.supported) return;
   collector.onSample(measurement => {
     send('traffic', measurement);
     updateTooltip(measurement);
-    accumulate(measurement.processes);
+    accumulate(measurement.processes, 'tcp');
     for (const row of measurement.processes) queueIcon(row.identity, row.pid);
     if (collector.lastError) {
       collector.lastError = null;
@@ -376,6 +435,13 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ledger = new backend.Ledger(path.join(app.getPath('userData'), 'ledger.json')).load();
   alerts = ledger.report().events;
+  // What was chosen last time, if this machine still allows it. A stored
+  // choice is not authority to start something: elevation can have been
+  // dropped since, and a refused mode stays off and says why.
+  const stored = ledger.report().settings.udpMode;
+  if (stored && stored !== 'off') {
+    try { setUdpMode(stored); } catch (_) { /* an unknown stored mode stays off */ }
+  }
 
   const report = {
     platform: 'win32', displayName: 'Windows', features: capabilities,
@@ -473,7 +539,13 @@ app.whenReady().then(() => {
     if (ledger) ledger.clearEvents().save();
     return alerts;
   });
-  ipcMain.handle('settings:read', () => ({ autostart: autostart(), startedHidden: hiddenStart }));
+  ipcMain.handle('settings:read', () => ({
+    autostart: autostart(), startedHidden: hiddenStart,
+    udpMode, udpModes: capabilities.udp.modes,
+    udpError: udpMode === 'off' ? null : udpCollector.lastError
+  }));
+  ipcMain.handle('settings:udp-mode', (_event, value) => setUdpMode(value));
+  ipcMain.handle('udp:read', () => udpLatest);
   ipcMain.handle('settings:autostart', (_event, value) =>
     ({ autostart: autostart(Boolean(value)) }));
   ipcMain.handle('signature:read', async (_event, program) => {
@@ -533,10 +605,23 @@ function runSmoke() {
   };
   setTimeout(async () => {
     try {
+      // Screenshots are a by-product of this run, not one of its assertions:
+      // they become the previews in the README. Whether the compositor can
+      // produce a frame at this moment depends on the state of the display -
+      // a sleeping or locked screen answers UnknownVizError - and failing
+      // every check because of that reports a broken application where there
+      // is none. A capture that fails is recorded by name and reason, so it
+      // is visible rather than swallowed, and the checks that read the page
+      // carry on proving what the window actually drew.
+      const missed = [];
       const shot = async name => {
         await new Promise(resolve => setTimeout(resolve, 300));
-        const png = await window.webContents.capturePage();
-        fs.writeFileSync(path.join(shotDirectory, `${name}-smoke.png`), png.toPNG());
+        try {
+          const png = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(shotDirectory, `${name}-smoke.png`), png.toPNG());
+        } catch (error) {
+          missed.push(`${name}: ${(error && error.message) || error}`);
+        }
       };
 
       // The overview has to be built from live data: open connections and the
@@ -774,6 +859,118 @@ function runSmoke() {
           return noted && listed && open && honest && !toggle.disabled;
         })()`);
 
+      // The settings panel is worth a picture of its own: the UDP route is
+      // chosen there, and the choice is the part of this feature a reader most
+      // needs to see.
+      await window.webContents.executeJavaScript(
+        `document.getElementById('settings').click()`);
+      await shot('settings');
+      await window.webContents.executeJavaScript(
+        `document.getElementById('settings-close').click()`);
+
+      // The UDP route, end to end: the four options are drawn with what each
+      // one gives, an option this machine refuses is disabled with its reason
+      // rather than left clickable, and choosing the one that always works
+      // produces rows on the page that shows them. The mode in force before
+      // the check is put back, so a smoke run does not change what the person
+      // had chosen.
+      results.udp = await window.webContents.executeJavaScript(`(async () => {
+          const before = await window.wirecove.readSettings();
+          const original = before.udpMode;
+          const modes = before.udpModes || {};
+          document.getElementById('settings').click();
+          const options = [...document.querySelectorAll('.udp-mode')];
+          if (options.length !== 4) return false;
+          // Every option explains itself: a bare label would leave the choice
+          // between them unmakeable.
+          const described = options.every(option =>
+            option.querySelector('small').textContent.trim().length > 20);
+          // A route this machine refuses is disabled and still says why,
+          // rather than vanishing or inviting a click that fails. Read before
+          // anything is clicked: choosing a mode redraws these nodes, and the
+          // ones held here are then no longer the ones on the page.
+          const honest = ['off', 'sockets', 'etw', 'windivert'].every((mode, index) =>
+            options[index].disabled === !(modes[mode] && modes[mode].supported));
+          const marked = options.filter(option =>
+            option.getAttribute('aria-checked') === 'true').length === 1;
+
+          // Sockets needs no rights, so it is the one route every machine can
+          // be asked to prove. The card is only drawn while its own page is
+          // showing, so the page comes first and the waiting second.
+          options[1].click();
+          document.getElementById('settings-close').click();
+          document.querySelector('[data-page="connections"]').click();
+          let rows = 0;
+          for (let i = 0; i < 100; i++) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            rows = document.querySelectorAll('#udp-rows .udp-row').length;
+            if (rows > 0) break;
+          }
+          const head = document.getElementById('udp-head');
+          // Sockets reports no bytes, so the columns must be sockets and
+          // ports. A byte column here would read as zero traffic rather than
+          // as no measurement.
+          const columns = !head.classList.contains('counts')
+            && head.textContent.trim().length > 0;
+          const footnote = document.querySelector('#udp-rows .udp-foot');
+          const stated = Boolean(footnote && footnote.textContent.trim().length > 20);
+          // The mode is left on deliberately: the screenshot taken next should
+          // show the feature working, not the state it was restored to. Every
+          // UDP check puts the original back once they have all run.
+          window.__wirecoveUdpWas = original;
+          return described && honest && marked && rows > 0 && columns && stated;
+        })()`);
+      await shot('udp');
+      // Every route this machine allows that claims to count bytes is proved,
+      // not just the first: the two reach the figures by different means, and
+      // one of them working says nothing about the other. A machine that
+      // allows neither records why it proved nothing rather than passing
+      // silently.
+      results.udpBytes = await window.webContents.executeJavaScript(`(async () => {
+          const order = ['off', 'sockets', 'etw', 'windivert'];
+          const before = await window.wirecove.readSettings();
+          const original = window.__wirecoveUdpWas || 'off';
+          const modes = before.udpModes || {};
+          const routes = ['etw', 'windivert'].filter(mode =>
+            modes[mode] && modes[mode].supported);
+          if (!routes.length) {
+            await window.wirecove.setUdpMode(original);
+            return 'no byte-counting route allowed on this machine';
+          }
+          const proved = [];
+          for (const route of routes) {
+            // Chosen the way a person would choose it, by clicking the option.
+            // Calling the bridge directly would leave the window's own idea of
+            // the running route untouched, and so would test nothing a user
+            // can reach.
+            document.getElementById('settings').click();
+            const options = [...document.querySelectorAll('.udp-mode')];
+            options[order.indexOf(route)].click();
+            document.getElementById('settings-close').click();
+            document.querySelector('[data-page="connections"]').click();
+            let rows = 0;
+            for (let i = 0; i < 150; i++) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+              rows = document.querySelectorAll('#udp-rows .udp-row.counts').length;
+              if (rows > 0) break;
+            }
+            const head = document.getElementById('udp-head');
+            // At least one row has to carry a figure, or the route is running
+            // and measuring nothing - which is the same as not working.
+            const figures = [...document.querySelectorAll('#udp-rows .udp-row.counts')]
+              .some(row => [...row.querySelectorAll('span')]
+                .some(cell => /[1-9]/.test(cell.textContent)));
+            if (!(rows > 0 && head.classList.contains('counts') && figures)) {
+              await window.wirecove.setUdpMode(original);
+              return false;
+            }
+            proved.push(route);
+          }
+          await window.wirecove.setUdpMode(original);
+          return proved.join(' and ');
+        })()`);
+      await shot('udp-bytes');
+
       results.tray = await (async () => {
         if (!tray || tray.isDestroyed()) return false;
         const before = collector.child ? collector.child.pid : null;
@@ -787,6 +984,9 @@ function runSmoke() {
         return hidden && running;
       })();
 
+      results.screenshots = missed.length
+        ? `not captured - ${missed.join('; ')}`
+        : true;
       const failed = Object.entries(results).filter(([, ok]) => !ok).map(([name]) => name);
       if (failed.length) throw new Error(`Failed sections: ${failed.join(', ')}`);
       record();
@@ -807,6 +1007,9 @@ app.on('before-quit', () => {
   // process goes, so quitting never costs the person a figure.
   try { bankNow(); } catch (_) { /* best effort */ }
   collector.stop();
+  // A real-time trace session or a driver handle left behind keeps costing the
+  // machine after the application has gone.
+  udpCollector.stop();
   // Never leave the machine filtered by a Wirecove that has quit.
   try { backend.dpi.stop(); } catch (_) { /* best effort */ }
 });

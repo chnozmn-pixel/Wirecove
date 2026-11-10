@@ -77,6 +77,41 @@ Object.assign(labels.en, {
   recordNote:'Daily usage is kept for at most {days} days in ledger.json inside Wirecove’s own data folder. Nothing is sent anywhere.'
 });
 
+Object.assign(labels.tr, {
+  udpTitle:'UDP ölçümü', udpChoose:'Yol seç',
+  udpNote:"UDP'nin bağlantısı yok, bu yüzden Windows okunacak bir sayaç tutmuyor. Tek bir doğru yol değil, farklı bedelleri olan yollar var; seçim senin.",
+  'udp.off':'Ölçme', 'udp.sockets':'Yalnızca soketler', 'udp.etw':"Windows'un olay akışı",
+  'udp.windivert':'Paketleri dinle',
+  'udpWhat.off':'Hiçbir şey okunmaz. Kullanım rakamları yalnızca TCP olur.',
+  'udpWhat.sockets':'Hangi program hangi portu açık tutuyor. Bayt yok, çünkü okunacak bayt yok. Yönetici yetkisi gerekmez.',
+  'udpWhat.etw':'Çekirdek her datagramı programıyla, boyutuyla ve iki ucuyla bildirir. Bu bir ölçümdür, tahmin değil. Yönetici yetkisi gerekir.',
+  'udpWhat.windivert':'Paketler okunur; boyutlar ve adresler görünür ama paket hangi programa ait olduğunu söylemez, bu porttan geriye bağlanır. Kapanmış bir soketin baytları sahipsiz kalır. Yönetici yetkisi gerekir.',
+  udpNotMeasured:'UDP ölçülmüyor. Aşağıdaki rakamlar ve günlük kullanım yalnızca TCP.',
+  udpSocketsOnly:'Bu yol bayt saymıyor; yalnızca hangi programın UDP kullandığını gösterir.',
+  udpSockets:'Soket', udpPorts:'Portlar', udpUnattributed:'Sahipsiz',
+  udpUnattributedNote:'Sahibi belirlenemeyen {amount} bayt var; soket ölçüm anından önce kapanmış. Baytlar gerçek, program satırları bu yüzden alt sınır.',
+  udpIncluded:'UDP dahil', udpExcluded:'yalnızca TCP',
+  udpStopped:'UDP ölçümü durdu', udpNoRows:'Henüz UDP etkinliği görünmedi',
+  udpRefused:'Bu yol bu makinede açılamıyor'
+});
+Object.assign(labels.en, {
+  udpTitle:'UDP measurement', udpChoose:'Choose a route',
+  udpNote:'UDP has no connection, so Windows keeps no counter to read. There is no single right route, only routes that cost different things; the choice is yours.',
+  'udp.off':'Do not measure', 'udp.sockets':'Sockets only', 'udp.etw':"Windows' own event stream",
+  'udp.windivert':'Sniff packets',
+  'udpWhat.off':'Nothing is read. The usage figures are TCP only.',
+  'udpWhat.sockets':'Which program holds which port open. No bytes, because there are none to read. Needs no administrator rights.',
+  'udpWhat.etw':'The kernel reports every datagram with its process, its size and both ends. This is a measurement, not an estimate. Needs administrator rights.',
+  'udpWhat.windivert':'Packets are read, so sizes and addresses are visible - but a packet does not say which program sent it, so the owner is joined back through the port. Bytes from a socket that has closed stay unattributed. Needs administrator rights.',
+  udpNotMeasured:'UDP is not being measured. The figures here and the daily usage are TCP only.',
+  udpSocketsOnly:'This route counts no bytes; it shows only which programs are using UDP.',
+  udpSockets:'Sockets', udpPorts:'Ports', udpUnattributed:'Unattributed',
+  udpUnattributedNote:'{amount} bytes could not be tied to a program; the socket closed before it was looked up. The bytes are real, which makes the per-application rows a floor.',
+  udpIncluded:'UDP included', udpExcluded:'TCP only',
+  udpStopped:'UDP measurement stopped', udpNoRows:'No UDP activity seen yet',
+  udpRefused:'This route cannot be opened on this machine'
+});
+
 const $ = id => document.getElementById(id);
 const features = window.wirecove.capabilities.features;
 const rates = features.traffic.supported;
@@ -129,6 +164,8 @@ let usageReport = null;
 let usageError = null;
 let alerts = [];
 let settings = null;
+let udpLive = null;
+let udpError = null;
 
 // Country names come from the runtime's own locale data rather than a table
 // shipped here, so they are already written the way the rest of the system
@@ -857,6 +894,7 @@ function twoLineCell(primary, secondary, className) {
 }
 
 function renderConnections() {
+  renderUdpCard();
   const container = $('conn-rows');
   container.replaceChildren();
   if (!features.hosts.supported) {
@@ -971,8 +1009,12 @@ function renderUsage() {
   $('usage-today').textContent = size(usageReport.totals.today.in + usageReport.totals.today.out);
   $('usage-month').textContent = size(usageReport.totals.month.in + usageReport.totals.month.out);
   $('usage-all').textContent = size(usageReport.totals.all.in + usageReport.totals.all.out);
-  $('usage-note').textContent = labels[language].recordNote
-    .replace('{days}', String(usageReport.retentionDays));
+  // Whether these totals include UDP is the single most important thing to
+  // say about them: the same number means two different things depending on
+  // the route, and a figure whose scope is unstated is a figure that misleads.
+  $('usage-note').textContent = `${labels[language].recordNote
+    .replace('{days}', String(usageReport.retentionDays))} · ${
+    udpRoute().bytes ? labels[language].udpIncluded : labels[language].udpExcluded}`;
 
   const days = usageDays(usageReport);
   const ceiling = Math.max(1, ...days.map(day => day.in + day.out));
@@ -1076,6 +1118,144 @@ function renderSettings() {
   toggle.disabled = !features.autostart.supported || settings === null;
   $('settings-record').textContent = labels[language].recordNote
     .replace('{days}', String(features.usage.retentionDays || 90));
+  renderUdpModes();
+}
+
+
+// --- the UDP route ----------------------------------------------------------
+// Which route is running and what it gives. The chosen mode comes from the
+// machine once settings have been read, and from the capability table before
+// that, so this never reports a route as counting bytes on the strength of
+// what was stored rather than what is running.
+function udpRoute() {
+  const mode = (settings && settings.udpMode) || 'off';
+  const table = (settings && settings.udpModes) || features.udp.modes || {};
+  return { mode, ...(table[mode] || { supported: false, bytes: false, peers: false }) };
+}
+
+// Four options, each carrying what it gives and, where it cannot run, the
+// reason in one line. An option this machine refuses is drawn disabled with
+// its reason rather than left clickable and allowed to fail.
+function renderUdpModes() {
+  const container = $('udp-modes');
+  if (!container) return;
+  container.textContent = '';
+  const available = (settings && settings.udpModes) || features.udp.modes || {};
+  const current = (settings && settings.udpMode) || 'off';
+  for (const mode of ['off', 'sockets', 'etw', 'windivert']) {
+    const info = available[mode] || { supported: false, reason: null };
+    const option = document.createElement('button');
+    option.className = `udp-mode${mode === current ? ' selected' : ''}`;
+    option.type = 'button';
+    option.setAttribute('role', 'radio');
+    option.setAttribute('aria-checked', mode === current ? 'true' : 'false');
+    option.disabled = !info.supported || settings === null;
+    const name = document.createElement('b');
+    name.textContent = labels[language][`udp.${mode}`];
+    const what = document.createElement('small');
+    // What it cannot do comes before what it does: a reason the user cannot
+    // act on is worse than useless if it is hidden under a description.
+    what.textContent = info.supported
+      ? labels[language][`udpWhat.${mode}`]
+      : (reasonFor(info) || labels[language].udpRefused);
+    option.append(name, what);
+    if (!option.disabled) option.addEventListener('click', () => chooseUdpMode(mode));
+    container.append(option);
+  }
+  const error = $('udp-error');
+  const message = (settings && settings.udpError) || udpError;
+  error.classList.toggle('hidden', !message);
+  error.textContent = message ? `${labels[language].udpStopped}: ${message}` : '';
+}
+
+async function chooseUdpMode(mode) {
+  for (const option of document.querySelectorAll('.udp-mode')) option.disabled = true;
+  udpError = null;
+  udpLive = null;
+  try {
+    const result = await window.wirecove.setUdpMode(mode);
+    // The main process answers with the mode that is actually running, which
+    // is not always the one asked for: a route it refuses leaves the old one
+    // in place and says why.
+    settings = { ...(settings || {}), udpMode: result.mode };
+    if (result.refused) udpError = result.reason || labels[language].udpRefused;
+  } catch (error) {
+    udpError = error && error.message ? error.message : labels[language].udpRefused;
+  }
+  renderUdpModes();
+  renderUdpCard();
+}
+
+// What the chosen route knows, on the page that lists connections. The columns
+// change with the route, because the routes do not know the same things: one
+// has bytes and the other has only sockets, and a byte column full of dashes
+// would read as zero traffic rather than as no measurement.
+function renderUdpCard() {
+  const rows = $('udp-rows');
+  const head = $('udp-head');
+  const meta = $('udp-meta');
+  if (!rows) return;
+  rows.textContent = '';
+  const route = udpRoute();
+  const mode = route.mode;
+  if (mode === 'off') {
+    head.classList.add('hidden');
+    meta.textContent = labels[language]['udp.off'];
+    return empty(rows, labels[language].udpNotMeasured);
+  }
+  meta.textContent = labels[language][`udp.${mode}`];
+  const counts = Boolean(route.bytes);
+  head.classList.remove('hidden');
+  head.className = `table-head udp-head${counts ? ' counts' : ''}`;
+  head.textContent = '';
+  const columns = counts
+    ? ['application', 'download', 'upload']
+    : ['application', 'udpSockets', 'udpPorts'];
+  for (const key of columns) {
+    const cell = document.createElement('span');
+    cell.textContent = labels[language][key];
+    head.append(cell);
+  }
+  if (udpError) return empty(rows, `${labels[language].udpStopped}: ${udpError}`);
+  if (!udpLive) return empty(rows, labels[language].waiting);
+  const processes = [...udpLive.processes];
+  if (!processes.length) return empty(rows, labels[language].udpNoRows);
+  processes.sort((left, right) => counts
+    ? (right.bytes_in + right.bytes_out) - (left.bytes_in + left.bytes_out)
+    : right.sockets - left.sockets);
+  for (const row of processes.slice(0, 80)) {
+    const line = document.createElement('div');
+    line.className = `udp-row${counts ? ' counts' : ''}`;
+    line.append(twoLineCell(row.process || labels[language].unknownApp,
+                            `PID ${row.pid}`, 'udp-app'));
+    if (counts) {
+      const received = document.createElement('span');
+      received.textContent = size(row.bytes_in);
+      const sent = document.createElement('span');
+      sent.textContent = size(row.bytes_out);
+      line.append(received, sent);
+    } else {
+      const sockets = document.createElement('span');
+      sockets.textContent = String(row.sockets);
+      const ports = document.createElement('span');
+      ports.className = 'udp-ports';
+      ports.textContent = (row.ports || []).join(', ');
+      line.append(sockets, ports);
+    }
+    rows.append(line);
+  }
+  if (!counts) {
+    const note = document.createElement('div');
+    note.className = 'udp-foot';
+    note.textContent = labels[language].udpSocketsOnly;
+    rows.append(note);
+  } else if (udpLive.unattributed_in || udpLive.unattributed_out) {
+    const note = document.createElement('div');
+    note.className = 'udp-foot';
+    note.textContent = labels[language].udpUnattributedNote.replace(
+      '{amount}', size(udpLive.unattributed_in + udpLive.unattributed_out));
+    rows.append(note);
+  }
 }
 
 async function loadSettings() {
@@ -1168,6 +1348,7 @@ function translate() {
   markSort(); fillModes(); renderDpi(); renderDns(); renderHistory(); renderDiagnostic();
   renderFirewall(); renderNetwork();
   renderConnections(); renderUsage(); renderAlerts(); renderSettings();
+  renderUdpModes(); renderUdpCard();
   render();
 }
 
@@ -1347,10 +1528,35 @@ $('alerts-clear').addEventListener('click', async () => {
   catch (_) { /* the list is left as it is rather than cleared on screen only */ }
   renderAlerts();
 });
+// The UDP measurement arrives whether or not its page is open: the record is
+// banked in the main process, and the card is only redrawn when it is visible.
+window.wirecove.onUdp(measurement => {
+  udpLive = measurement;
+  udpError = null;
+  // The measurement says which route produced it, which is the truth about
+  // what is running. The stored choice can disagree - it is restored at
+  // startup before the settings are read, and it can be changed from outside
+  // this window - and a card drawn from the stale answer would show the wrong
+  // columns, or none at all, for a route that is working.
+  if (settings && settings.udpMode !== measurement.mode) {
+    settings = { ...settings, udpMode: measurement.mode };
+    if (!$('settings-panel').classList.contains('hidden')) renderUdpModes();
+  }
+  if (page === 'connections') renderUdpCard();
+});
+window.wirecove.onUdpStatus(status => {
+  udpError = status && status.error ? status.error : null;
+  if (page === 'connections') renderUdpCard();
+  if (!$('settings-panel').classList.contains('hidden')) renderUdpModes();
+});
 window.wirecove.onAlerts(events => {
   alerts = [...(events || []), ...alerts].slice(0, 200);
   if (page === 'firewall') renderAlerts();
 });
+
+// Read once at startup too, not only when the panel opens: the connections
+// page has to know which route is running before anyone opens settings.
+loadSettings().then(() => { if (page === 'connections') renderUdpCard(); });
 
 // The settings panel is read from the machine each time it opens.
 $('settings').addEventListener('click', () => {

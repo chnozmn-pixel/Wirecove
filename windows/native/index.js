@@ -9,6 +9,7 @@ const { readDnsStatus } = require('./dns');
 const { runJsonScript } = require('./powershell');
 const dpi = require('./dpi/control');
 const traffic = require('./traffic');
+const udp = require('./udp');
 const firewall = require('./firewall');
 const netscan = require('./netscan');
 const signature = require('./signature');
@@ -42,6 +43,14 @@ function capabilities() {
     // Windows' UDP tables carry a local endpoint and an owning PID but no
     // remote address, so there is no peer to record and UDP rows are skipped.
     connections: { supported: true, reason: null, note: 'tcp-only' },
+    // UDP has no per-connection counter to read, so there is no single answer
+    // here - only routes that cost different things. The table says which of
+    // them this machine will allow; which one to use is the user's choice, and
+    // 'off' is always one of them.
+    udp: {
+      supported: true, reason: null, note: 'user-chosen',
+      modes: udp.check().modes
+    },
     icons: { supported: true, reason: null },
     dns: { supported: true, reason: null },
     diagnose: { supported: true, reason: null },
@@ -164,6 +173,7 @@ module.exports = {
   diagnose,
   dpi,
   traffic,
+  udp,
   firewall,
   netscan,
   signature,

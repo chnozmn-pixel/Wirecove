@@ -123,13 +123,27 @@ def build(mode):
     raise ValueError(f'unknown mode {mode!r}')
 
 
+def elevated():
+    """Whether this process holds administrator rights."""
+    import ctypes
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def available(mode):
     """Whether this mode can run here, and why not when it cannot.
 
-    Each mode is asked rather than guessed at, the same way the TCP side asks
-    the kernel: whether a trace session can be started or a driver opened
-    depends on this process's token, not on anything readable from
-    configuration.
+    This deliberately does not build the mode to find out. Starting a trace
+    session or opening the driver has an effect on the machine, and doing it to
+    populate a menu the user may never touch - loading a kernel driver so that
+    an entry can be drawn in grey - would be the wrong trade. What is checked
+    is what can be checked for nothing: the platform, this process's token, and
+    whether the files are in this build.
+
+    A mode that passes this and then fails when it is actually selected reports
+    that failure at the point of selection, which is where the user is looking.
     """
     if sys.platform != 'win32':
         return False, 'platform', 'UDP measurement only exists on Windows'
@@ -137,15 +151,21 @@ def available(mode):
         return True, None, None
     if mode not in MODES:
         return False, 'unknown', f'No such mode: {mode}'
-    try:
-        collector, reason = build(mode)
-    except ImportError as exc:
-        return False, 'missing', str(exc)
-    except OSError as exc:
-        return False, 'refused', str(exc)
-    if collector is None:
-        return False, reason[0], reason[1]
-    collector.close()
+    if mode == 'sockets':
+        # A table read, available to any process.
+        return True, None, None
+    if not elevated():
+        return False, 'elevation', {
+            'etw': 'A trace session needs administrator rights',
+            'windivert': 'Opening WinDivert needs administrator rights',
+        }[mode]
+    if mode == 'windivert':
+        import os
+        here = os.path.dirname(os.path.abspath(__file__))
+        folder = 'x86_64' if sys.maxsize > 2 ** 32 else 'x86'
+        library = os.path.join(here, 'dpi', 'goodbyedpi', folder, 'WinDivert.dll')
+        if not os.path.exists(library):
+            return False, 'missing', 'WinDivert.dll is not in this build'
     return True, None, None
 
 
@@ -165,6 +185,16 @@ def stream(mode, samples, interval):
             for row in measurement['endpoints']:
                 yield dict(kind='endpoint', protocol='udp', mode=mode,
                            sample=produced, **row)
+            # What the measurement knows about itself: bytes it could not tie
+            # to a program, events it would not parse, whether the kernel side
+            # filter took. These belong to the sample rather than to any row,
+            # and without a line of their own they would never reach the
+            # interface - which would then have no way to say that the
+            # per-application figures are a floor.
+            summary = {key: value for key, value in measurement.items()
+                       if key not in ('processes', 'endpoints')}
+            yield dict(kind='summary', protocol='udp', mode=mode,
+                       sample=produced, **summary)
             produced += 1
     finally:
         collector.close()

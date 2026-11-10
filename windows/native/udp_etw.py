@@ -274,6 +274,42 @@ def _properties():
     return buffer, properties
 
 
+def decode(event_id, payload):
+    """(pid, bytes, remote address, remote port, direction) for one event.
+
+    Returns None for an event that is not one of the four, or a payload too
+    short or too absurd to trust. Pure, and separate from the callback, so the
+    byte order and the direction can be tested without a trace session.
+    """
+    shape = UDP_EVENTS.get(event_id)
+    if shape is None:
+        return None
+    family, direction = shape
+    layout = LAYOUT[family]
+    if payload is None or len(payload) < layout.size:
+        return None
+    pid, size, daddr, saddr, dport, sport = layout.unpack(payload[:layout.size])
+    # The ports arrive in network byte order, the way they sit on the wire.
+    # Read as little-endian integers they come out byte-swapped: 53 reads as
+    # 13568 and 443 as 47873, which would file every datagram under the wrong
+    # port and the wrong service.
+    dport, sport = socket.ntohs(dport), socket.ntohs(sport)
+    # A datagram cannot carry more than this, so a larger figure means the
+    # payload was not what this build emits.
+    if size <= 0 or size > 0x10000:
+        return None
+    # The event names both ends; which one is remote depends on the direction.
+    if direction == 'out':
+        remote_raw, remote_port = daddr, dport
+    else:
+        remote_raw, remote_port = saddr, sport
+    if family == 4:
+        remote = socket.inet_ntop(socket.AF_INET, struct.pack('<I', remote_raw))
+    else:
+        remote = socket.inet_ntop(socket.AF_INET6, remote_raw)
+    return pid, size, remote, remote_port, direction
+
+
 class Counter:
     """A running total of UDP bytes per process and per remote endpoint.
 
@@ -402,44 +438,21 @@ class Counter:
     # -- the callback -----------------------------------------------------
     def _on_event(self, record_pointer):
         """Called by the kernel's thread for every event. Does as little as
-        possible: a bounds check, an unpack, and two additions."""
+        possible: decode, then two additions."""
         try:
             record = record_pointer.contents
-            event_id = record.EventHeader.EventDescriptor.Id
-            shape = UDP_EVENTS.get(event_id)
-            if shape is None:
-                return
-            family, direction = shape
-            layout = LAYOUT[family]
             length = record.UserDataLength
-            if length < layout.size or not record.UserData:
-                # Short payload: the layout is not what this build emits.
-                # Counted so the interface can say so, never half-parsed.
-                with self._lock:
-                    self._dropped += 1
+            payload = (ctypes.string_at(record.UserData, length)
+                       if record.UserData and length else None)
+            decoded = decode(record.EventHeader.EventDescriptor.Id, payload)
+            if decoded is None:
+                if record.EventHeader.EventDescriptor.Id in UDP_EVENTS:
+                    # One of ours that would not parse. Counted so the
+                    # interface can say so, never half-read.
+                    with self._lock:
+                        self._dropped += 1
                 return
-            payload = ctypes.string_at(record.UserData, layout.size)
-            pid, size, daddr, saddr, dport, sport = layout.unpack(payload)
-            # The ports arrive in network byte order, the way they sit on the
-            # wire. Read as little-endian integers they come out byte-swapped:
-            # 53 reads as 13568 and 443 as 47873, which would put every
-            # datagram under the wrong service and the wrong port.
-            dport, sport = socket.ntohs(dport), socket.ntohs(sport)
-            if size <= 0 or size > 0x10000:
-                with self._lock:
-                    self._dropped += 1
-                return
-            # The event names the two ends by address; which of them is the
-            # remote one depends on the direction the datagram went.
-            if direction == 'out':
-                remote_raw, remote_port = daddr, dport
-            else:
-                remote_raw, remote_port = saddr, sport
-            if family == 4:
-                remote = socket.inet_ntop(socket.AF_INET,
-                                          struct.pack('<I', remote_raw))
-            else:
-                remote = socket.inet_ntop(socket.AF_INET6, remote_raw)
+            pid, size, remote, remote_port, direction = decoded
             index = 0 if direction == 'in' else 1
             keyword = record.EventHeader.EventDescriptor.Keyword
             with self._lock:
