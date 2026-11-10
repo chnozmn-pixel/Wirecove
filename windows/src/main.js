@@ -3,6 +3,21 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const backend = require('../native');
+// Windows identifies an application in its notifications by its App User
+// Model ID. Without one it falls back to the host process - which is how a
+// notice from this application came to be headed "electron.app.Electron" with
+// a stranger's icon. Taken from the build's own appId so the running
+// application and the installed one are the same identity to Windows, and the
+// shortcut the installer writes carries the same value.
+const APP_ID = (() => {
+  try { return require('../package.json').build.appId; }
+  catch (_) { return 'dev.wirecove.windows'; }
+})();
+// Set before anything can raise a notice. Windows reads the name and icon it
+// shows from the shortcut registered under this id, so an installed build is
+// named properly; a run straight from a checkout has no such shortcut and
+// Windows still falls back to the host process there.
+app.setAppUserModelId(APP_ID);
 const modes = require('../native/dpi/modes');
 
 let window;
@@ -109,10 +124,34 @@ function buildTrayMenu() {
   ]));
 }
 
+// The mark, read once. It sits beside the application in a packaged build and
+// two directories up in a checkout, and `..`/`..` from src happens to be both.
+let brandCache = null;
+function brand() {
+  if (brandCache === null) {
+    brandCache = nativeImage.createFromPath(
+      path.join(__dirname, '..', '..', 'assets', 'wirecove-mark.png'));
+  }
+  return brandCache;
+}
+
+// A notice carries the mark where there is one. An empty image would be worse
+// than none: Windows draws a blank square rather than falling back.
+function notice(title, content) {
+  if (!tray || tray.isDestroyed()) return;
+  const image = brand();
+  const balloon = { title, content };
+  if (!image.isEmpty()) {
+    balloon.icon = image.resize({ width: 32, height: 32 });
+    balloon.iconType = 'custom';
+  }
+  try { tray.displayBalloon(balloon); }
+  catch (_) { /* balloons are a Windows courtesy, not a requirement */ }
+}
+
 function createTray() {
   if (tray) return;
-  const file = path.join(__dirname, '..', '..', 'assets', 'wirecove-mark.png');
-  const image = nativeImage.createFromPath(file);
+  const image = brand();
   tray = new Tray(image.isEmpty() ? image : image.resize({ width: 16, height: 16 }));
   tray.setToolTip('Wirecove');
   buildTrayMenu();
@@ -242,12 +281,8 @@ function announce(events) {
   if (!tray || tray.isDestroyed() || !events.length) return;
   const first = events[0];
   const subject = first.name || first.path;
-  try {
-    tray.displayBalloon({
-      title: first.kind === 'binary-changed' ? words().changedTitle : words().firstTitle,
-      content: events.length > 1 ? `${subject} (+${events.length - 1})` : subject
-    });
-  } catch (_) { /* balloons are a Windows courtesy, not a requirement */ }
+  notice(first.kind === 'binary-changed' ? words().changedTitle : words().firstTitle,
+         events.length > 1 ? `${subject} (+${events.length - 1})` : subject);
 }
 
 async function bank() {
@@ -339,9 +374,7 @@ function createWindow() {
     window.hide();
     if (tray && !tray.isDestroyed() && !window.toldAboutTray) {
       window.toldAboutTray = true;
-      try {
-        tray.displayBalloon({ title: words().hiddenTitle, content: words().hidden });
-      } catch (_) { /* balloons are a Windows courtesy, not a requirement */ }
+      notice(words().hiddenTitle, words().hidden);
     }
   });
   window.loadFile(path.join(__dirname, 'index.html'));
